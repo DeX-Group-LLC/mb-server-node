@@ -1,11 +1,11 @@
 # message-broker-node
-![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue?style=square)
-![Tests Status](https://img.shields.io/github/actions/workflow/status/DeX-Group-LLC/message-broker-node/tests.yml?label=tests&style=square)
-![Coverage Status](https://img.shields.io/coveralls/github/DeX-Group-LLC/message-broker-node?style=square)
-![Node Version](https://img.shields.io/badge/node-%3E%3D18.x-brightgreen?style=square)
-![NPM Version](https://img.shields.io/badge/npm%20package-deadbeef-green?style=square)
-![Dependencies](https://img.shields.io/librariesio/release/npm/message-broker-node?style=square)
-![Install Size](https://packagephobia.com/badge?p=message-broker-node?style=square)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue?style=square)](https://opensource.org/licenses/Apache-2.0)
+[![Tests Status](https://github.com/DeX-Group-LLC/message-broker-node/actions/workflows/tests.yml/badge.svg?style=square)](https://github.com/DeX-Group-LLC/message-broker-node/actions/workflows/tests.yml)
+[![Coverage Status](https://coveralls.io/repos/github/DeX-Group-LLC/message-broker-node/badge.svg?branch=main&style=square)](https://coveralls.io/github/DeX-Group-LLC/message-broker-node?branch=main)
+[![Node Version](https://img.shields.io/badge/node-%3E%3D18.x-brightgreen?style=square)](https://nodejs.org)
+[![NPM Version](https://img.shields.io/badge/npm%20package-deadbeef-green?style=square)](https://www.npmjs.com/package/message-broker-node)
+[![Dependencies](https://img.shields.io/librariesio/release/npm/message-broker-node?style=square)](https://libraries.io/npm/message-broker-node)
+[![Install Size](https://packagephobia.com/badge?p=message-broker-node?style=square)](https://packagephobia.com/result?p=message-broker-node)
 
 🚀 A Node.js reference implementation of the Message Broker for the North American Baggage Handling Architecture Standard (NABHAS), designed for demonstration and testing purposes. This WebSocket-based message broker enables real-time communication between baggage handling services.
 
