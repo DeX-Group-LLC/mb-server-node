@@ -1,0 +1,38 @@
+port: 3000
+host: 'localhost'
+logging:
+  level: 'info'
+  format: 'json'
+# ... other default configuration values
+auth:
+  failure:
+    lockout:
+      threshold: 5
+      duration: 60
+rate:
+  limit:
+    global:
+      per:
+        service: 0 # 0 means unlimited
+        topic: 0
+    topic:
+      per:
+        service: {} # Empty object to allow for dynamic keys
+connection:
+  max:
+    concurrent: 100
+  heartbeatRetryTimeout: 30000
+  heartbeatDeregisterTimeout: 60000
+request:
+  response:
+    timeout:
+      default: 5000
+      max: 3600000
+max:
+  outstanding:
+    requests: 10000
+message:
+  payload:
+    maxLength: 16384
+monitoring:
+  interval: 60000  # Collect metrics every 60 seconds

@@ -1,0 +1,63 @@
+{
+  "name": "message-broker",
+  "version": "1.0.0",
+  "description": "A reference implementation of the NABHAS message broker, implemented in Node.js. Designed for demonstration, testing, and as an example for production-ready systems.",
+  "scripts": {
+    "start": "ts-node src/server.ts",
+    "start:client": "ts-node examples/websocket-client.ts",
+    "test": "jest --coverage --maxWorkers=4"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.10.3",
+    "@types/semver": "^7.5.8",
+    "@types/ws": "^8.5.13",
+    "@typescript-eslint/eslint-plugin": "^8.19.0",
+    "@typescript-eslint/parser": "^8.19.0",
+    "dotenv": "^16.4.7",
+    "eslint": "^9.17.0",
+    "jest": "^29.7.0",
+    "prettier": "^3.4.2",
+    "ts-jest": "^29.2.5",
+    "typescript": "^5.7.2",
+    "yaml": "^2.7.0"
+  },
+  "dependencies": {
+    "semver": "^7.6.3",
+    "winston": "^3.17.0",
+    "ws": "^8.18.0"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "transform": {
+      "^.+\\.tsx?$": "ts-jest"
+    },
+    "testRegex": "(/__tests__/.*|(\\.|/)(test|spec))\\.(jsx?|tsx?)$",
+    "moduleFileExtensions": [
+      "ts",
+      "tsx",
+      "js",
+      "jsx",
+      "json",
+      "node"
+    ],
+    "moduleDirectories": [
+      "node_modules",
+      "src"
+    ],
+    "moduleNameMapper": {
+      "^@/(.*)$": "<rootDir>/src/$1",
+      "^@core/(.*)$": "<rootDir>/src/core/$1",
+      "^@config$": "<rootDir>/src/config",
+      "^@config/(.*)$": "<rootDir>/src/config/$1",
+      "^@package.json$": "<rootDir>/package.json",
+      "^@server$": "<rootDir>/src/server",
+      "^@test/(.*)$": "<rootDir>/test/$1",
+      "^@utils/(.*)$": "<rootDir>/src/utils/$1",
+      "^@version$": "<rootDir>/src/version"
+    },
+    "setupFilesAfterEnv": ["<rootDir>/test/setup.ts"]
+  }
+}

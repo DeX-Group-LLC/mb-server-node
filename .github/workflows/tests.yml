@@ -1,0 +1,105 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 0'
+
+permissions:
+  contents: read
+  pull-requests: write  # Required for coverage comments
+  actions: write        # Required to cancel workflow runs
+
+jobs:
+  check-and-throttle-schedule:
+    name: Check and throttle schedule
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check workflow history
+        id: check_history
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const runs = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'tests.yml',
+              per_page: 100
+            });
+
+            const now = new Date();
+            const workflowRuns = runs.data.workflow_runs;
+
+            // Find last completed run (success or failure, excluding current run)
+            const lastCompletedRun = workflowRuns.find(run =>
+              run.id !== context.runId &&
+              run.status === 'completed' &&
+              (run.conclusion === 'success' || run.conclusion === 'failure')
+            );
+
+            // If no completed runs found, or last run was a failure, continue
+            if (!lastCompletedRun || lastCompletedRun.conclusion === 'failure') {
+              console.log('No recent successful runs or last run failed, proceeding with workflow');
+              return;
+            }
+
+            // Check if last successful run was within 24 hours
+            const lastRunTime = new Date(lastCompletedRun.updated_at);
+            const diffInHours = (now - lastRunTime) / (1000 * 60 * 60);
+
+            if (diffInHours <= 24) {
+              console.log('Recent successful run found within 24 hours, cancelling current run');
+              await github.rest.actions.cancelWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: context.runId
+              });
+              process.exit(1); // Exit to stop further steps
+            }
+
+            console.log('Last successful run was more than 24 hours ago, proceeding with workflow');
+
+  test:
+    name: Test on node ${{ matrix.node-version }} and ${{ matrix.os }}
+    needs: check-and-throttle-schedule
+    if: ${{ always() && (needs.check-and-throttle-schedule.result == 'success' || needs.check-and-throttle-schedule.result == 'skipped') }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [18.x, 20.x, 22.x]
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        cache: 'npm'
+        node-version: ${{ matrix.node-version }}
+    # Use separate run commands so command status handled correctly on Windows
+    - name: npm install
+      run: npm ci
+    - name: npm test
+      run: npm test
+
+    - name: Upload coverage to Coveralls
+      uses: coverallsapp/github-action@v2
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        flag-name: run ${{ join(matrix.*, ' - ') }}
+        parallel: true
+
+  finish:
+    name: Coveralls Finished
+    needs: test
+    if: ${{ always() && needs.test.result != 'skipped' && needs.test.result != 'cancelled' }}
+    runs-on: ubuntu-latest
+    steps:
+    - name: Coveralls Finished
+      uses: coverallsapp/github-action@v2
+      with:
+        parallel-finished: true
