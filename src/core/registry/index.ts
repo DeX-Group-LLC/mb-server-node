@@ -1,14 +1,17 @@
-import { config } from '@/config';
+import { LogEntry } from 'winston';
+import { config } from '@config';
 import { ConnectionManager } from '@core/connection';
 import {
     InvalidRequestError,
     ServiceUnavailableError,
     TopicNotSupportedError,
 } from '@core/errors';
+import { MonitoringManager } from '@core/monitoring';
 import { SubscriptionManager } from '@core/subscription';
-import { Message, TopicUtils } from '@/core/utils';
 import { ActionType } from '@core/types';
+import { Header, Message, TopicUtils } from '@core/utils';
 import logger from '@utils/logger';
+import { RegistryMetrics } from './metrics';
 
 interface ServiceRegistration {
     id: string;
@@ -20,7 +23,7 @@ interface ServiceRegistration {
     heartbeatDeregisterTimeout: NodeJS.Timeout;
     logSubscriptions: {
         level: string;
-        codes: string[];
+        regex?: RegExp;
     };
     metricSubscriptions: {
         metrics: string[];
@@ -29,14 +32,44 @@ interface ServiceRegistration {
 }
 
 export class ServiceRegistry {
-    private services: Map<string, ServiceRegistration>;
+    private readonly services: Map<string, ServiceRegistration>;
     private connectionManager!: ConnectionManager;
     private subscriptionManager: SubscriptionManager;
+    private readonly metrics: RegistryMetrics;
 
-    constructor(subscriptionManager: SubscriptionManager) {
+    constructor(subscriptionManager: SubscriptionManager, private readonly monitoringManager: MonitoringManager) {
         this.services = new Map();
         this.subscriptionManager = subscriptionManager;
+        this.metrics = new RegistryMetrics(monitoringManager);
+        this.metrics.count.slot.set(0);
+
+        // Hook into the logger:
+        logger.on('logged', this._handleLogBind);
+        logger.info('[ServiceRegistry] Hooked into the logger');
     }
+
+    /**
+     * Handles log events from the logger.
+     *
+     * @param message The log message.
+     */
+    private handleLog(message: LogEntry): void {
+        const header: Header = {
+            action: ActionType.RESPONSE,
+            topic: 'system.log',
+            version: '1.0.0',
+        };
+        const payload = { level: message.level, message: message.message };
+        // Loop through all services and check if the log message matches the service's log subscriptions
+        for (const service of this.services.values()) {
+            // Check if the service has subscribed to the log level and code (if codes are empty, subscribe to all codes)
+            if (service.logSubscriptions.level === message.level && (service.logSubscriptions.regex === undefined || service.logSubscriptions.regex.test(message.message))) {
+                // Send the log message to the service
+                this.connectionManager.sendMessage(service.id, header, payload);
+            }
+        }
+    }
+    private _handleLogBind = this.handleLog.bind(this);
 
     /**
      * Assigns a ConnectionManager to the ServiceRegistry.
@@ -48,14 +81,21 @@ export class ServiceRegistry {
     }
 
     /**
-     * Unregisters all services.
+     * Disposes of all services and metrics.
      */
-    async clearAllServices() {
+    dispose(): void {
         for (const service of this.services.values()) {
             this.unregisterService(service.id);
         }
         this.services.clear();
-        logger.info('Cleared all services');
+        logger.info('[ServiceRegistry] Unregistered all services');
+
+        this.metrics.dispose();
+        logger.info('[ServiceRegistry] Disposed of all metrics');
+
+        // Unhook from the logger:
+        logger.off('log', this._handleLogBind);
+        logger.info('[ServiceRegistry] Unhooked from the logger');
     }
 
     /**
@@ -77,7 +117,7 @@ export class ServiceRegistry {
             existingService.lastHeartbeat = now;
             this.resetHeartbeat(existingService);
             this.services.set(serviceId, existingService);
-            logger.info(`Service ${serviceId} updated.`);
+            logger.info(`[ServiceRegistry] Service ${serviceId} updated.`);
         } else {
             // Add the new service
             this.services.set(serviceId, {
@@ -86,12 +126,23 @@ export class ServiceRegistry {
                 description,
                 connectedAt: now,
                 lastHeartbeat: now,
-                logSubscriptions: { level: '', codes: [] }, // Default log subscription level
+                logSubscriptions: { level: '', regex: undefined }, // Default log subscription level
                 metricSubscriptions: { metrics: [], frequency: 0 },
                 heartbeatRetryTimeout: setTimeout(this.sendHeartbeat.bind(this, serviceId), config.connection.heartbeatRetryTimeout),
                 heartbeatDeregisterTimeout: setTimeout(this.unregisterService.bind(this, serviceId), config.connection.heartbeatDeregisterTimeout),
             });
-            logger.info(`Service ${serviceId} registered.`);
+            logger.info(`[ServiceRegistry] Service ${serviceId} registered.`);
+
+            // Register parameterized metrics for the new service
+            this.metrics.serviceUptime.registerMetric({ serviceId });
+            this.metrics.serviceErrorRate.registerMetric({ serviceId });
+        }
+
+        this.metrics.count.slot.set(this.services.size);
+        this.metrics.registrationRate.slot.add(1);
+        const serviceMetric = this.metrics.serviceUptime.getMetric({ serviceId });
+        if (serviceMetric) {
+            serviceMetric.slot.reset();
         }
     }
 
@@ -107,7 +158,20 @@ export class ServiceRegistry {
             this.services.delete(serviceId);
             this.subscriptionManager.unsubscribe(serviceId);
             this.connectionManager.removeConnection(serviceId);
-            logger.info(`Service ${serviceId} unregistered.`);
+            logger.info(`[ServiceRegistry] Service ${serviceId} unregistered.`);
+        }
+
+        this.metrics.count.slot.set(this.services.size);
+        this.metrics.unregistrationRate.slot.add(1);
+
+        // Dispose of service-specific metrics
+        const uptimeMetric = this.metrics.serviceUptime.getMetric({ serviceId });
+        if (uptimeMetric) {
+            uptimeMetric.dispose();
+        }
+        const errorMetric = this.metrics.serviceErrorRate.getMetric({ serviceId });
+        if (errorMetric) {
+            errorMetric.dispose();
         }
     }
 
@@ -118,7 +182,7 @@ export class ServiceRegistry {
      * @param message The received message.
      */
     handleSystemMessage(serviceId: string, message: Message): void {
-        logger.info(`Received system message from ${serviceId}:`, message);
+        logger.info(`[ServiceRegistry] Received system message from ${serviceId}:`, message);
 
         // Check the actions are valid
         if (message.header.topic === 'system.heartbeat') {
@@ -131,39 +195,42 @@ export class ServiceRegistry {
             throw new InvalidRequestError(`Invalid action, expected REQUEST for ${message.header.topic}`, { action: message.header.action, topic: message.header.topic });
         }
 
-        switch (message.header.topic) {
-            case 'system.heartbeat':
-                this.handleHeartbeatRequest(serviceId, message);
-                break;
-            case 'system.log.subscribe':
-                this.handleLogSubscribe(serviceId, message);
-                break;
-            case 'system.log.unsubscribe':
-                this.handleLogUnsubscribe(serviceId, message);
-                break;
-            case 'system.metric':
-                this.handleMetricRequest(serviceId, message);
-                break;
-            case 'system.service.list':
-                this.handleServiceList(serviceId, message);
-                break;
-            case 'system.service.register':
-                this.handleServiceRegister(serviceId, message);
-                break;
-            case 'system.topic.list':
-                this.handleTopicList(serviceId, message);
-                break;
-            case 'system.topic.subscribe':
-                this.handleTopicSubscribe(serviceId, message);
-                break;
-            case 'system.topic.unsubscribe':
-                this.handleTopicUnsubscribe(serviceId, message);
-                break;
-            default:
-                logger.warn(`Received unknown system message topic: ${message.header.topic}`);
-                const header = { ...message.header, action: ActionType.RESPONSE };
-                const payload = { error: new TopicNotSupportedError(`Unknown system message topic: ${message.header.topic}`).toJSON() };
-                this.connectionManager.sendMessage(serviceId, header, payload);
+        try {
+            switch (message.header.topic) {
+                case 'system.heartbeat':
+                    this.handleHeartbeatRequest(serviceId, message);
+                    break;
+                case 'system.log.subscribe':
+                    this.handleLogSubscribe(serviceId, message);
+                    break;
+                case 'system.log.unsubscribe':
+                    this.handleLogUnsubscribe(serviceId, message);
+                    break;
+                case 'system.metric':
+                    this.handleMetricRequest(serviceId, message);
+                    break;
+                case 'system.service.list':
+                    this.handleServiceList(serviceId, message);
+                    break;
+                case 'system.service.register':
+                    this.handleServiceRegister(serviceId, message);
+                    break;
+                case 'system.topic.list':
+                    this.handleTopicList(serviceId, message);
+                    break;
+                case 'system.topic.subscribe':
+                    this.handleTopicSubscribe(serviceId, message);
+                    break;
+                case 'system.topic.unsubscribe':
+                    this.handleTopicUnsubscribe(serviceId, message);
+                    break;
+                default:
+                    throw new TopicNotSupportedError(`Unknown system message topic: ${message.header.topic}`);
+            }
+        } catch (error) {
+            logger.error(`[ServiceRegistry] Error handling system message from ${serviceId}:`, error);
+            this.metrics.serviceErrorRate.getMetric({ serviceId })?.slot.add(1);
+            throw error;
         }
     }
 
@@ -194,11 +261,8 @@ export class ServiceRegistry {
         // Check if the service exists
         const service = this.services.get(serviceId);
         if (!service) {
-            const responseHeader = { ...message.header, action: ActionType.RESPONSE };
-            const responsePayload = { error: new ServiceUnavailableError(`Service ${serviceId} not found`).toJSON() };
-            this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
             this.connectionManager.removeConnection(serviceId);
-            return;
+            throw new ServiceUnavailableError(`Service ${serviceId} not found`);
         }
 
         // Update the last heartbeat
@@ -220,36 +284,37 @@ export class ServiceRegistry {
     private handleLogSubscribe(serviceId: string, message: Message): void {
         const service = this.services.get(serviceId);
         if (!service) {
-            const responseHeader = { ...message.header, action: ActionType.RESPONSE };
-            const responsePayload = { error: new ServiceUnavailableError(`Service ${serviceId} not found`).toJSON() };
-            this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
             this.connectionManager.removeConnection(serviceId);
-            return;
+            throw new ServiceUnavailableError(`Service ${serviceId} not found`);
         }
 
-        const { level = 'error', codes = [] } = message.payload; // Default to error if no level is specified
+        let { level = 'error', regex = undefined } = message.payload; // Default to error if no level is specified
 
         // Validate the level
         const validLevels = ['debug', 'info', 'warn', 'error'];
         if (typeof level !== 'string' || !validLevels.includes(level)) {
-            const responseHeader = { ...message.header, action: ActionType.RESPONSE };
-            const responsePayload = { error: new InvalidRequestError('Invalid log level', { level }).toJSON() };
-            this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
-            return;
+            throw new InvalidRequestError('Invalid log level', { level });
         }
 
-        // Validate the codes (if provided)
-        if (!Array.isArray(codes) || !codes.every(code => typeof code === 'string')) {
-            const responseHeader = { ...message.header, action: ActionType.RESPONSE };
-            const responsePayload = { error: new InvalidRequestError('Invalid log codes', { codes }).toJSON() };
-            this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
-            return;
+        // Validate the regex (if provided)
+        if (regex) {
+            if (typeof regex !== 'string') {
+                throw new InvalidRequestError('Invalid log regex', { regex });
+            }
+            try {
+                regex = new RegExp(regex);
+            } catch (error) {
+                throw new InvalidRequestError('Invalid log regex', { regex });
+            }
         }
 
         // Update the service's log subscriptions
-        service.logSubscriptions = { level, codes };
-        this.services.set(serviceId, service);
+        service.logSubscriptions = { level, regex };
 
+        // Subscribe to the log level and regex
+        this.subscriptionManager.subscribe(serviceId, `system.log`);
+
+        // Send a success response
         const responseHeader = { ...message.header, action: ActionType.RESPONSE };
         const responsePayload = { status: 'success' };
         this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
@@ -264,17 +329,17 @@ export class ServiceRegistry {
     private handleLogUnsubscribe(serviceId: string, message: Message): void {
         const service = this.services.get(serviceId);
         if (!service) {
-            const responseHeader = { ...message.header, action: ActionType.RESPONSE };
-            const responsePayload = { error: new ServiceUnavailableError(`Service ${serviceId} not found`).toJSON() };
-            this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
             this.connectionManager.removeConnection(serviceId);
-            return;
+            throw new ServiceUnavailableError(`Service ${serviceId} not found`);
         }
 
         // Reset log subscriptions to default (no level, no codes)
-        service.logSubscriptions = { level: '', codes: [] };
-        this.services.set(serviceId, service);
+        service.logSubscriptions = { level: '', regex: undefined };
 
+        // Unsubscribe from the log level and regex
+        this.subscriptionManager.unsubscribe(serviceId, `system.log`);
+
+        // Send a success response
         const responseHeader = { ...message.header, action: ActionType.RESPONSE };
         const responsePayload = { status: 'success' };
         this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
@@ -287,12 +352,19 @@ export class ServiceRegistry {
      * @param message The message to handle.
      */
     private handleMetricRequest(serviceId: string, message: Message): void {
+        // Check if the service exists
+        const service = this.services.get(serviceId);
+        if (!service) {
+            this.connectionManager.removeConnection(serviceId);
+            throw new ServiceUnavailableError(`Service ${serviceId} not found`);
+        }
+
         // TODO: Implement logic to fetch the latest metrics
         // const metrics = this.monitoring.getLatestMetrics();
+        const metrics = this.monitoringManager.serializeMetrics();
 
         const responseHeader = { ...message.header, action: ActionType.RESPONSE };
-        // const responsePayload = { timestamp: new Date().toISOString(), metrics };
-        const responsePayload = { error: new ServiceUnavailableError('Metric collection not implemented yet').toJSON() }; // Placeholder
+        const responsePayload = { metrics };
         this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
     }
 
@@ -313,6 +385,8 @@ export class ServiceRegistry {
         const responseHeader = { ...message.header, action: ActionType.RESPONSE };
         const responsePayload = { services };
         this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
+
+        this.metrics.discoveryRate.slot.add(1);
     }
 
     /**
@@ -327,10 +401,7 @@ export class ServiceRegistry {
 
         // Validate the payload
         if (!name || typeof name !== 'string' || !description || typeof description !== 'string') {
-            const responseHeader = { ...message.header, action: ActionType.RESPONSE };
-            const responsePayload = { error: new InvalidRequestError('Missing or invalid name or description', { name, description }).toJSON() };
-            this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
-            return;
+            throw new InvalidRequestError('Missing or invalid name or description', { name, description });
         }
 
         // Register the service
@@ -366,26 +437,17 @@ export class ServiceRegistry {
 
         // Check if the topic is valid
         if (!topic || typeof topic !== 'string' || !TopicUtils.isValid(topic)) {
-            const responseHeader = { ...message.header, action: ActionType.RESPONSE };
-            const responsePayload = { error: new InvalidRequestError('Missing or invalid topic', { topic }).toJSON() };
-            this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
-            return;
+            throw new InvalidRequestError('Missing or invalid topic', { topic });
         }
 
         // Only allow subscribing to topics that are not system topics, or system.service.register, or system.topic.subscribe
         if (topic.startsWith('system.') && topic !== 'system.service.register' && topic !== 'system.topic.subscribe') {
-            const responseHeader = { ...message.header, action: ActionType.RESPONSE };
-            const responsePayload = { error: new InvalidRequestError('Unable to subscribe to restricted topic', { topic }).toJSON() };
-            this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
-            return;
+            throw new InvalidRequestError('Unable to subscribe to restricted topic', { topic });
         }
 
         // Check if the priority is a valid number
         if (typeof priority !== 'number' || isNaN(priority) || !isFinite(priority)) {
-            const responseHeader = { ...message.header, action: ActionType.RESPONSE };
-            const responsePayload = { error: new InvalidRequestError('Invalid priority', { priority }).toJSON() };
-            this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
-            return;
+            throw new InvalidRequestError('Invalid priority', { priority });
         }
 
         const success = this.subscriptionManager.subscribe(serviceId, topic, priority);
@@ -404,18 +466,12 @@ export class ServiceRegistry {
         const { topic } = message.payload;
 
         if (!topic || typeof topic !== 'string' || !TopicUtils.isValid(topic)) {
-            const responseHeader = { ...message.header, action: ActionType.RESPONSE };
-            const responsePayload = { error: new InvalidRequestError('Missing or invalid topic', { topic }).toJSON() };
-            this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
-            return;
+            throw new InvalidRequestError('Missing or invalid topic', { topic });
         }
 
         // Only allow unsubscribing from topics that are not system topics, or system.service.register, or system.topic.subscribe
         if (topic.startsWith('system.') && topic !== 'system.service.register' && topic !== 'system.topic.subscribe') {
-            const responseHeader = { ...message.header, action: ActionType.RESPONSE };
-            const responsePayload = { error: new InvalidRequestError('Unable to unsubscribe from restricted topic', { topic }).toJSON() };
-            this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
-            return;
+            throw new InvalidRequestError('Unable to unsubscribe from restricted topic', { topic });
         }
 
         const success = this.subscriptionManager.unsubscribe(serviceId, topic);

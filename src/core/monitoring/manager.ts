@@ -1,10 +1,7 @@
 import { InternalError } from '@core/errors';
-import { ParameterizedMetric } from './metrics/parameterized';
-import { BaseSlot, IReadOnlySlot, IManageableSlot, GaugeSlot } from './metrics/slots';
-import { Metric } from './metrics/metric';
-
-// Regex for validating metric names (supports parameterized names)
-const METRIC_NAME_REGEX = /^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*|\.\{[a-z]+:[^:}]+\}){0,4}$/;
+import logger from '@utils/logger';
+import { Metric, ParameterizedMetric } from './metrics';
+import { BaseSlot, IReadOnlySlot } from './metrics/slots';
 
 /**
  * Manages all metrics in the application, providing registration and lookup functionality.
@@ -112,5 +109,26 @@ export class MonitoringManager {
         // Clear the maps
         this.metrics.clear();
         this.parameterizedMetrics.clear();
+
+        logger.info('[MonitoringManager] Cleared all metrics');
+    }
+
+    /**
+     * Serializes all metrics to a JSON object.
+     * @returns A JSON object containing all metrics.
+     */
+    serializeMetrics(): Record<string, any> {
+        const metrics: Record<string, any> = {};
+        // Serialize all metrics:
+        for (const metric of this.metrics.values()) {
+            metrics[metric.name] = metric.slot.value;
+        }
+        // Serialize all parameterized metrics:
+        for (const metric of this.parameterizedMetrics.values()) {
+            for (const metricInstance of metric.allMetrics) {
+                metrics[metricInstance.name] = metricInstance.slot.value;
+            }
+        }
+        return metrics;
     }
 }

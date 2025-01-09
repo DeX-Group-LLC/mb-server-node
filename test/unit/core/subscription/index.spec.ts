@@ -17,7 +17,7 @@ describe('SubscriptionManager', () => {
 
     afterEach(() => {
         // Clean up subscriptions after each test to ensure isolation
-        subscriptionManager.clearAllSubscriptions();
+        subscriptionManager.dispose();
     });
 
     describe('subscribe', () => {

@@ -1,5 +1,5 @@
 import * as semver from 'semver';
-import { config } from '@/config';
+import { config } from '@config';
 import { MalformedMessageError } from '@core/errors';
 import { ActionType } from '@core/types';
 import { Header, Payload } from '@core/utils/types';

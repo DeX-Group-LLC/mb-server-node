@@ -28,7 +28,7 @@ export interface ExtractResult {
  * metric.getMetric({ topic: 'events.europe' }).set(1);  // Creates metric 'router.message.rate.{topic:events.europe}'
  * ```
  */
-export class ParameterizedMetric<TSlot extends BaseSlot = any> extends EventEmitter {
+export class ParameterizedMetric<TSlot extends BaseSlot = IManageableSlot> extends EventEmitter {
     private pattern: RegExp;
     private metrics = new Map<string, Metric<TSlot>>();
 
@@ -130,6 +130,8 @@ export class ParameterizedMetric<TSlot extends BaseSlot = any> extends EventEmit
      * "router.message.rate.{topic:events.eu}"
      */
     private serializeMetricName(params: Record<string, string>): string {
+        // Convert params to lowercase to match case insensitive lookup
+        params = Object.fromEntries(Object.entries(params).map(([key, value]) => [key.toLowerCase(), value]));
         return this.template.replace(/\{([a-z]+)\}/g, (_, param) => {
             const value = params[param];
             if (!value) throw new InternalError(`Missing value for parameter ${param}`, { param });

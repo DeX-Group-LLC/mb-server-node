@@ -53,7 +53,7 @@ describe('MessageRouter', () => {
 
     afterEach(() => {
         // Clean up any outstanding requests after each test to ensure isolation
-        messageRouter.clearRequests();
+        messageRouter.dispose();
     });
 
     describe('routeMessage', () => {
@@ -828,7 +828,7 @@ describe('MessageRouter', () => {
             (messageRouter as any).requests.set('service4:req-4', request2);
 
             // Clear all requests
-            (messageRouter as any).clearRequests();
+            messageRouter.dispose();
 
             // Verify all requests were removed
             expect((messageRouter as any).getRequest('service2', 'req-2')).toBeUndefined();

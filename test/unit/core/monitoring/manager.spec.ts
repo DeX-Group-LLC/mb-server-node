@@ -1,13 +1,13 @@
 import { EventEmitter } from 'events';
 import { InternalError } from '@core/errors';
 import { MonitoringManager } from '@core/monitoring/manager';
-import { Metric } from '@core/monitoring/metrics/metric';
-import { ParameterizedMetric } from '@core/monitoring/metrics/parameterized';
+import { Metric, ParameterizedMetric } from '@core/monitoring/metrics';
 import { BaseSlot } from '@core/monitoring/metrics/slots/base';
 
 // Mock dependencies
-jest.mock('@core/monitoring/metrics/metric');
-jest.mock('@core/monitoring/metrics/parameterized');
+jest.mock('@core/monitoring/metrics');
+jest.mock('@core/monitoring/metrics');
+jest.mock('@utils/logger');
 
 /**
  * Mock slot for testing.
@@ -253,6 +253,41 @@ describe('MonitoringManager', () => {
             // Verify all metrics are now inaccessible
             expect(manager.getMetric('test.metric')).toBeUndefined();
             expect(manager.getMetric('test.{param:value}.metric')).toBeUndefined();
+        });
+    });
+
+    describe('serializeMetrics', () => {
+        it('should serialize both regular and parameterized metrics', () => {
+            // Setup mock values for different metrics
+            mockSlot.value = 42;
+
+            // Create a regular metric
+            manager.registerMetric('test.metric', MockSlot);
+
+            // Create a parameterized metric
+            MockParameterizedMetric.isParameterized = jest.fn()
+                .mockImplementation(name => name.includes('{param}'));
+            const paramMetric = manager.registerParameterized('test.{param}.metric', MockSlot);
+
+            // Mock the parameterized metric to return some instances
+            const mockInstances = [
+                { name: 'test.param1.metric', slot: { value: 100 } },
+                { name: 'test.param2.metric', slot: { value: 200 } }
+            ];
+            Object.defineProperty(paramMetric, 'allMetrics', { get: () => mockInstances });
+
+            // Serialize and verify
+            const serialized = manager.serializeMetrics();
+            expect(serialized).toEqual({
+                'test.metric': 42,
+                'test.param1.metric': 100,
+                'test.param2.metric': 200
+            });
+        });
+
+        it('should handle empty metrics', () => {
+            const serialized = manager.serializeMetrics();
+            expect(serialized).toEqual({});
         });
     });
 });

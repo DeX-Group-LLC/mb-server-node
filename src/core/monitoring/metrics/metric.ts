@@ -10,7 +10,7 @@ const METRIC_NAME_REGEX = /^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*|\.\{[a-z]+:[^:}]+\})
  * This is the primary metric type used for monitoring values.
  * TSlot is the type of slot that handles value storage and behavior
  */
-export class Metric<TSlot extends BaseSlot = any> extends EventEmitter {
+export class Metric<TSlot extends BaseSlot = IManageableSlot> extends EventEmitter {
     /** The slot that handles value storage and behavior */
     private _slot: TSlot;
 

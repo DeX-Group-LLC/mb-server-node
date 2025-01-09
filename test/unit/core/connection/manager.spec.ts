@@ -2,7 +2,7 @@ import { jest } from '@jest/globals';
 import { randomUUID } from 'crypto';
 import { ConnectionManager } from '@core/connection/manager';
 import { Connection, ConnectionState } from '@core/connection/types';
-import { Metric, MonitoringManager } from '@/core/monitoring';
+import { Metric, MonitoringManager } from '@core/monitoring';
 import { ServiceRegistry } from '@core/registry';
 import { MessageRouter } from '@core/router';
 import { ActionType } from '@core/types';
@@ -90,7 +90,7 @@ describe('ConnectionManager', () => {
 
     afterEach(() => {
         // Clean up connections after each test
-        connectionManager.closeAllConnections();
+        connectionManager.dispose();
     });
 
     /**
@@ -230,7 +230,7 @@ describe('ConnectionManager', () => {
 
             // Verify send was logged
             expect(logger.info).toHaveBeenCalledWith(
-                `Sent message to service ${serviceId}`
+                `[ConnectionManager] Sent message to service ${serviceId}`
             );
         });
 
@@ -259,7 +259,7 @@ describe('ConnectionManager', () => {
 
             // Verify send was logged
             expect(logger.info).toHaveBeenCalledWith(
-                `Sent message to service ${serviceId}`
+                `[ConnectionManager] Sent message to service ${serviceId}`
             );
         });
 
@@ -280,7 +280,7 @@ describe('ConnectionManager', () => {
 
             // Verify warning was logged
             expect(logger.warn).toHaveBeenCalledWith(
-                `Unable to send message to service ${nonExistentServiceId}: connection not found`
+                `[ConnectionManager] Unable to send message to service ${nonExistentServiceId}: connection not found`
             );
         });
 
@@ -320,7 +320,7 @@ describe('ConnectionManager', () => {
 
             // Verify warning was logged
             expect(logger.warn).toHaveBeenCalledWith(
-                `Unable to send message to service ${serviceId}: Connection is not open`
+                `[ConnectionManager] Unable to send message to service ${serviceId}: Connection is not open`
             );
 
             // Verify connection was properly closed
@@ -364,7 +364,7 @@ describe('ConnectionManager', () => {
 
             // Verify message receipt was logged
             expect(logger.info).toHaveBeenCalledWith(
-                `Received message from service ${mockConnection.serviceId} (IP ${mockConnection.ip})`
+                `[ConnectionManager] Received message from service ${mockConnection.serviceId} (IP ${mockConnection.ip})`
             );
         });
 
@@ -391,7 +391,7 @@ describe('ConnectionManager', () => {
             );
 
             // Verify error was logged
-            expect(logger.error).toHaveBeenCalledWith('[MALFORMED_MESSAGE] Invalid message format: no newline separator found', undefined);
+            expect(logger.error).toHaveBeenCalledWith('[ConnectionManager] [MALFORMED_MESSAGE] Invalid message format: no newline separator found', undefined);
         });
 
         /**
@@ -445,7 +445,7 @@ describe('ConnectionManager', () => {
 
             // Verify error was logged
             expect(logger.error).toHaveBeenCalledWith(
-                'An unexpected error while routing the message:',
+                '[ConnectionManager] An unexpected error while routing the message:',
                 expect.any(Error)
             );
 
@@ -484,7 +484,7 @@ describe('ConnectionManager', () => {
 
             // Verify error was logged
             expect(logger.error).toHaveBeenCalledWith(
-                'Unexpected error while parsing message header:',
+                '[ConnectionManager] Unexpected error while parsing message header:',
                 expect.any(Error)
             );
         });
@@ -523,7 +523,7 @@ describe('ConnectionManager', () => {
 
             // Verify error was logged
             expect(logger.error).toHaveBeenCalledWith(
-                'Unexpected error while parsing message payload:',
+                '[ConnectionManager] Unexpected error while parsing message payload:',
                 expect.any(Error)
             );
         });
@@ -586,14 +586,14 @@ describe('ConnectionManager', () => {
             connectionManager.addConnection(mockConnection2);
 
             // Close all connections
-            await connectionManager.closeAllConnections();
+            await connectionManager.dispose();
 
             // Verify connections were closed
             expect(mockConnection.close).toHaveBeenCalled();
             expect(connectionManager.getConnectionCount()).toBe(0);
 
             // Verify operation was logged
-            expect(logger.info).toHaveBeenCalledWith('Closed all connections');
+            expect(logger.info).toHaveBeenCalledWith('[ConnectionManager] Closed all connections');
         });
     });
 });

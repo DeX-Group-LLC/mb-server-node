@@ -300,15 +300,15 @@ export class MessageRouter {
     }
 
     /**
-     * Clears all outstanding requests and their associated timeouts.
+     * Disposes of all outstanding requests and their associated timeouts.
      */
-    async clearRequests(): Promise<void> {
+    async dispose(): Promise<void> {
         for (const request of this.requests.values()) {
             if (request.timeout) {
                 clearTimeout(request.timeout);
             }
         }
         this.requests.clear();
-        logger.info('Cleared all outstanding requests');
+        logger.info('[MessageRouter] Cleared all outstanding requests');
     }
 }

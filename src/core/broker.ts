@@ -24,48 +24,48 @@ export class MessageBroker {
         this.monitorManager = new MonitoringManager();
         this.subscriptionManager = new SubscriptionManager();
         this.messageRouter = new MessageRouter(this.subscriptionManager);
-        this.serviceRegistry = new ServiceRegistry(this.subscriptionManager);
+        this.serviceRegistry = new ServiceRegistry(this.subscriptionManager, this.monitorManager);
         this.connectionManager = new ConnectionManager(this.messageRouter, this.serviceRegistry, this.monitorManager);
         this.serviceRegistry.assignConnectionManager(this.connectionManager);
         this.messageRouter.assignConnectionManager(this.connectionManager);
         this.messageRouter.assignServiceRegistry(this.serviceRegistry);
         this.wss = createWebSocketServer(this.connectionManager);
         this.createdAt = new Date();
-        logger.info(`Message Broker created at ${this.createdAt.toISOString()}`);
-        logger.info(`Message Broker listening on ${config.host}:${config.port} (WebSocket)`);
+        logger.info(`[MessageBroker] Created at ${this.createdAt.toISOString()}`);
+        logger.info(`[MessageBroker] Listening on ${config.host}:${config.port} (WebSocket)`);
     }
 
     /**
      * Shuts down the Message Broker.
      */
     async shutdown(): Promise<void> {
-        logger.info('Shutting down Message Broker...');
+        logger.info('[MessageBroker] Shutting down...');
 
         // Clear all requests
-        await this.messageRouter.clearRequests();
+        await this.messageRouter.dispose();
 
         // Clear all subscriptions
-        await this.subscriptionManager.clearAllSubscriptions();
+        await this.subscriptionManager.dispose();
 
         // Clear all services
-        await this.serviceRegistry.clearAllServices();
+        await this.serviceRegistry.dispose();
 
         // Close all connections
-        await this.connectionManager.closeAllConnections();
+        await this.connectionManager.dispose();
 
         // Stop the WebSocket server
         await new Promise<void>((resolve, reject) => {
             this.wss.close((err) => {
                 if (err) {
-                    logger.error('Error closing WebSocket server:', err);
+                    logger.error('[MessageBroker] Error closing WebSocket server:', err);
                     reject(err);
                 } else {
-                    logger.info('WebSocket server closed');
+                    logger.info('[MessageBroker] WebSocket server closed');
                     resolve();
                 }
             });
         });
 
-        logger.info('Message Broker shutdown complete.');
+        logger.info('[MessageBroker] Shutdown complete.');
     }
 }

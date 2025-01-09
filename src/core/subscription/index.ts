@@ -149,10 +149,10 @@ export class SubscriptionManager {
     }
 
     /**
-     * Clears all subscriptions.
+     * Disposes of all subscriptions.
      */
-    async clearAllSubscriptions(): Promise<void> {
+    async dispose(): Promise<void> {
         this.subscriptions.clear();
-        logger.info('Cleared all subscriptions');
+        logger.info('[SubscriptionManager] Cleared all subscriptions');
     }
 }
