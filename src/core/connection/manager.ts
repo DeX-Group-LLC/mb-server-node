@@ -6,8 +6,10 @@ import { ServiceRegistry } from '@core/registry';
 import { MessageRouter } from '@core/router';
 import { MessageUtils, Header, Payload } from '@core/utils';
 import { ActionType } from '@core/types';
-import logger from '@utils/logger';
+import { SetupLogger } from '@utils/logger';
 import { ConnectionMetrics } from './metrics';
+
+const logger = SetupLogger('ConnectionManager');
 
 /**
  * The header for an error message when the message header are malformed.
@@ -48,7 +50,7 @@ export class ConnectionManager {
             this.serviceRegistry.registerService(connection.serviceId);
             // Update metrics
             this.metrics.onConnectionEstablished();
-            logger.info(`[ConnectionManager] Added connection for service ${connection.serviceId} (IP ${connection.ip})`);
+            logger.info(`Added connection for service ${connection.serviceId} (IP ${connection.ip})`);
         } catch (error) {
             // If registration fails, remove the connection
             this.connections.delete(connection.serviceId);
@@ -71,7 +73,7 @@ export class ConnectionManager {
             this.connections.delete(serviceId);
             this.serviceRegistry.unregisterService(serviceId);
             this.metrics.onConnectionClosed();
-            logger.info(`[ConnectionManager] Removed connection for service ${serviceId} (IP ${connection.ip})`);
+            logger.info(`Removed connection for service ${serviceId} (IP ${connection.ip})`);
         }
     }
 
@@ -86,19 +88,19 @@ export class ConnectionManager {
         const connection = this.connections.get(serviceId);
 
         if (!connection) {
-            logger.warn(`[ConnectionManager] Unable to send message to service ${serviceId}: connection not found`);
+            logger.warn(`Unable to send message to service ${serviceId}: connection not found`);
             return;
         }
 
         if (connection.state !== ConnectionState.OPEN) {
-            logger.warn(`[ConnectionManager] Unable to send message to service ${serviceId}: Connection is not open`);
+            logger.warn(`Unable to send message to service ${serviceId}: Connection is not open`);
             connection.close();
             this.removeConnection(serviceId);
             throw new InternalError('Desired service connection is not open');
         }
 
         connection.send(MessageUtils.serialize(header, payload));
-        logger.info(`[ConnectionManager] Sent message to service ${serviceId}`);
+        //logger.debug(`[ConnectionManager] Sent message to service ${serviceId}`);
     }
 
     /**
@@ -111,7 +113,7 @@ export class ConnectionManager {
         let header: Header | null = null;
         let payload: Payload | null = null;
 
-        logger.info(`[ConnectionManager] Received message from service ${connection.serviceId} (IP ${connection.ip})`);
+        //logger.debug(`[ConnectionManager] Received message from service ${connection.serviceId} (IP ${connection.ip})`);
 
         try {
             // Create the parser and parse the message
@@ -126,24 +128,24 @@ export class ConnectionManager {
             header = header !== null ? { ...header, action: ActionType.RESPONSE } : ERROR_HEADER;
             // If the error is a MessageError, send an error message to the client
             if (error instanceof MessageError) {
-                logger.error(`[ConnectionManager] [${error.code}] ${error.message}`, error.details);
+                logger.error(`[${error.code}] ${error.message}`, error.details);
                 connection.send(MessageUtils.serialize(header, { error: error.toJSON() }));
                 return;
             } else if (error instanceof Error) {
                 if (header == ERROR_HEADER) {
                     // If the header is null, the message is malformed
-                    logger.error('[ConnectionManager] Unexpected error while parsing message header:', error);
+                    logger.error('Unexpected error while parsing message header:', error);
                     connection.send(MessageUtils.serialize(header, { error: new MalformedMessageError('Unexpected error while parsing message header').toJSON() }));
                     return;
                 } else if (payload == null) {
                     // If the payload is null, the message is malformed
-                    logger.error('[ConnectionManager] Unexpected error while parsing message payload:', error);
+                    logger.error('Unexpected error while parsing message payload:', error);
                     connection.send(MessageUtils.serialize(header, { error: new MalformedMessageError('Unexpected error while parsing message payload').toJSON() }));
                     return;
                 } else {
                     // If the error is not a MessageError and the header and payload are not null, then the error is during routing
                     // Send an internal error message to the client
-                    logger.error('[ConnectionManager] An unexpected error while routing the message:', error);
+                    logger.error('An unexpected error while routing the message:', error);
                     connection.send(MessageUtils.serialize(header, { error: new InternalError('An unexpected error while routing the message').toJSON() }));
                     return;
                 }
@@ -188,8 +190,8 @@ export class ConnectionManager {
             connection.close();
         }
         this.connections.clear();
-        logger.info('[ConnectionManager] Closed all connections');
+        logger.info('Closed all connections');
         this.metrics.dispose();
-        logger.info('[ConnectionManager] Disposed of all metrics');
+        logger.info('Disposed of all metrics');
     }
 }

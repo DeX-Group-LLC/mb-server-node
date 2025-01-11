@@ -28,7 +28,7 @@ export interface ExtractResult {
  * metric.getMetric({ topic: 'events.europe' }).set(1);  // Creates metric 'router.message.rate.{topic:events.europe}'
  * ```
  */
-export class ParameterizedMetric<TSlot extends BaseSlot = IManageableSlot> extends EventEmitter {
+export class ParameterizedMetric<TSlot extends BaseSlot = BaseSlot> extends EventEmitter {
     private pattern: RegExp;
     private metrics = new Map<string, Metric<TSlot>>();
 

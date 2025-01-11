@@ -15,6 +15,7 @@ export class UptimeSlot extends BaseSlot implements ISlotSettable<Date> {
      */
     set(value: Date): void {
         this._startTime = value;
+        this._lastModified = new Date();
     }
 
     /**
@@ -37,6 +38,7 @@ export class UptimeSlot extends BaseSlot implements ISlotSettable<Date> {
      */
     reset(): void {
         this._startTime = new Date();
+        this._lastModified = new Date();
     }
 
     /**

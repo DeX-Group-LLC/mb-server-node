@@ -1,5 +1,7 @@
 import { TopicUtils } from '@core/utils';
-import logger from '@utils/logger';
+import { SetupLogger } from '@utils/logger';
+
+const logger = SetupLogger('SubscriptionManager');
 
 interface Subscriber {
     serviceId: string;
@@ -153,6 +155,6 @@ export class SubscriptionManager {
      */
     async dispose(): Promise<void> {
         this.subscriptions.clear();
-        logger.info('[SubscriptionManager] Cleared all subscriptions');
+        logger.info('Cleared all subscriptions');
     }
 }

@@ -4,7 +4,6 @@
   "description": "A reference implementation of the NABHAS message broker, implemented in Node.js. Designed for demonstration, testing, and as an example for production-ready systems.",
   "author": "DeX Group, LLC",
   "license": "Apache-2.0",
-  "type": "module",
   "homepage": "https://github.com/DeX-Group-LLC/message-broker-node#readme",
   "repository": {
     "type": "git",
@@ -21,8 +20,8 @@
     "typescript"
   ],
   "scripts": {
-    "start": "ts-node src/server.ts",
-    "start:client": "ts-node examples/websocket-client.ts",
+    "start": "ts-node -r tsconfig-paths/register src/server.ts",
+    "start:client": "ts-node -r tsconfig-paths/register examples/websocket-client.ts",
     "test": "jest --coverage --maxWorkers=4",
     "coveralls": "jest --coverage && coveralls < coverage/lcov.info"
   },

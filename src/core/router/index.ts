@@ -6,7 +6,9 @@ import { ServiceRegistry } from '@core/registry';
 import { SubscriptionManager } from '@core/subscription';
 import { ActionType } from '@core/types';
 import { Message, Header } from '@core/utils';
-import logger from '@utils/logger';
+import { SetupLogger } from '@utils/logger';
+
+const logger = SetupLogger('MessageRouter');
 
 export interface Request {
     originServiceId: string;
@@ -309,6 +311,6 @@ export class MessageRouter {
             }
         }
         this.requests.clear();
-        logger.info('[MessageRouter] Cleared all outstanding requests');
+        logger.info('Cleared all outstanding requests');
     }
 }

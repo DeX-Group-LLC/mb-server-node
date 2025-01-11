@@ -1,4 +1,4 @@
-import { LogEntry } from 'winston';
+import { LogEntry, transports } from 'winston';
 import { config } from '@config';
 import { ConnectionManager } from '@core/connection';
 import {
@@ -10,8 +10,10 @@ import { MonitoringManager } from '@core/monitoring';
 import { SubscriptionManager } from '@core/subscription';
 import { ActionType } from '@core/types';
 import { Header, Message, TopicUtils } from '@core/utils';
-import logger from '@utils/logger';
+import { SetupLogger } from '@utils/logger';
 import { RegistryMetrics } from './metrics';
+
+const logger = SetupLogger('ServiceRegistry');
 
 interface ServiceRegistration {
     id: string;
@@ -22,7 +24,7 @@ interface ServiceRegistration {
     heartbeatRetryTimeout: NodeJS.Timeout;
     heartbeatDeregisterTimeout: NodeJS.Timeout;
     logSubscriptions: {
-        level: string;
+        levels: string[];
         regex?: RegExp;
     };
     metricSubscriptions: {
@@ -44,8 +46,9 @@ export class ServiceRegistry {
         this.metrics.count.slot.set(0);
 
         // Hook into the logger:
-        logger.on('logged', this._handleLogBind);
-        logger.info('[ServiceRegistry] Hooked into the logger');
+        logger.stream({ start: -1 }).on('log', this._handleLogBind);
+        logger.on('data', this._handleLogBind);
+        logger.info('Hooked into the logger');
     }
 
     /**
@@ -54,20 +57,25 @@ export class ServiceRegistry {
      * @param message The log message.
      */
     private handleLog(message: LogEntry): void {
+        //logger.off('data', this._handleLogBind);
         const header: Header = {
             action: ActionType.RESPONSE,
             topic: 'system.log',
             version: '1.0.0',
         };
-        const payload = { level: message.level, message: message.message };
         // Loop through all services and check if the log message matches the service's log subscriptions
         for (const service of this.services.values()) {
             // Check if the service has subscribed to the log level and code (if codes are empty, subscribe to all codes)
-            if (service.logSubscriptions.level === message.level && (service.logSubscriptions.regex === undefined || service.logSubscriptions.regex.test(message.message))) {
+            if (service.logSubscriptions.levels.includes(message.level) && (service.logSubscriptions.regex === undefined || service.logSubscriptions.regex.test(message.message))) {
                 // Send the log message to the service
-                this.connectionManager.sendMessage(service.id, header, payload);
+                try {
+                    this.connectionManager.sendMessage(service.id, header, message);
+                } catch (error) {
+                    logger.error(`Error sending log message to service ${service.id}:`, error);
+                }
             }
         }
+        //logger.on('data', this._handleLogBind);
     }
     private _handleLogBind = this.handleLog.bind(this);
 
@@ -88,14 +96,14 @@ export class ServiceRegistry {
             this.unregisterService(service.id);
         }
         this.services.clear();
-        logger.info('[ServiceRegistry] Unregistered all services');
+        logger.info('Unregistered all services');
 
         this.metrics.dispose();
-        logger.info('[ServiceRegistry] Disposed of all metrics');
+        logger.info('Disposed of all metrics');
 
         // Unhook from the logger:
-        logger.off('log', this._handleLogBind);
-        logger.info('[ServiceRegistry] Unhooked from the logger');
+        logger.off('data', this._handleLogBind);
+        logger.info('Unhooked from the logger');
     }
 
     /**
@@ -117,7 +125,7 @@ export class ServiceRegistry {
             existingService.lastHeartbeat = now;
             this.resetHeartbeat(existingService);
             this.services.set(serviceId, existingService);
-            logger.info(`[ServiceRegistry] Service ${serviceId} updated.`);
+            logger.info(`Service ${serviceId} updated.`, { name, description });
         } else {
             // Add the new service
             this.services.set(serviceId, {
@@ -126,12 +134,12 @@ export class ServiceRegistry {
                 description,
                 connectedAt: now,
                 lastHeartbeat: now,
-                logSubscriptions: { level: '', regex: undefined }, // Default log subscription level
+                logSubscriptions: { levels: [], regex: undefined }, // Default log subscription level
                 metricSubscriptions: { metrics: [], frequency: 0 },
                 heartbeatRetryTimeout: setTimeout(this.sendHeartbeat.bind(this, serviceId), config.connection.heartbeatRetryTimeout),
                 heartbeatDeregisterTimeout: setTimeout(this.unregisterService.bind(this, serviceId), config.connection.heartbeatDeregisterTimeout),
             });
-            logger.info(`[ServiceRegistry] Service ${serviceId} registered.`);
+            logger.info(`Service ${serviceId} registered.`, { name, description });
 
             // Register parameterized metrics for the new service
             this.metrics.serviceUptime.registerMetric({ serviceId });
@@ -158,7 +166,7 @@ export class ServiceRegistry {
             this.services.delete(serviceId);
             this.subscriptionManager.unsubscribe(serviceId);
             this.connectionManager.removeConnection(serviceId);
-            logger.info(`[ServiceRegistry] Service ${serviceId} unregistered.`);
+            logger.info(`Service ${serviceId} unregistered.`, { name: service.name, description: service.description });
         }
 
         this.metrics.count.slot.set(this.services.size);
@@ -182,7 +190,7 @@ export class ServiceRegistry {
      * @param message The received message.
      */
     handleSystemMessage(serviceId: string, message: Message): void {
-        logger.info(`[ServiceRegistry] Received system message from ${serviceId}:`, message);
+        logger.info(`Received system message from ${serviceId}`, { header: message.header });
 
         // Check the actions are valid
         if (message.header.topic === 'system.heartbeat') {
@@ -198,7 +206,7 @@ export class ServiceRegistry {
         try {
             switch (message.header.topic) {
                 case 'system.heartbeat':
-                    this.handleHeartbeatRequest(serviceId, message);
+                    this.handleHeartbeatMessage(serviceId, message);
                     break;
                 case 'system.log.subscribe':
                     this.handleLogSubscribe(serviceId, message);
@@ -206,8 +214,8 @@ export class ServiceRegistry {
                 case 'system.log.unsubscribe':
                     this.handleLogUnsubscribe(serviceId, message);
                     break;
-                case 'system.metric':
-                    this.handleMetricRequest(serviceId, message);
+                case 'system.metrics':
+                    this.handleMetricsRequest(serviceId, message);
                     break;
                 case 'system.service.list':
                     this.handleServiceList(serviceId, message);
@@ -228,7 +236,7 @@ export class ServiceRegistry {
                     throw new TopicNotSupportedError(`Unknown system message topic: ${message.header.topic}`);
             }
         } catch (error) {
-            logger.error(`[ServiceRegistry] Error handling system message from ${serviceId}:`, error);
+            logger.error(`Error handling system message from ${serviceId}:`, error);
             this.metrics.serviceErrorRate.getMetric({ serviceId })?.slot.add(1);
             throw error;
         }
@@ -257,7 +265,7 @@ export class ServiceRegistry {
      * @param serviceId The ID of the service requesting the metrics.
      * @param message The message to handle.
      */
-    private handleHeartbeatRequest(serviceId: string, message: Message): void {
+    private handleHeartbeatMessage(serviceId: string, message: Message): void {
         // Check if the service exists
         const service = this.services.get(serviceId);
         if (!service) {
@@ -288,12 +296,20 @@ export class ServiceRegistry {
             throw new ServiceUnavailableError(`Service ${serviceId} not found`);
         }
 
-        let { level = 'error', regex = undefined } = message.payload; // Default to error if no level is specified
+        let { levels = ['error'], regex = undefined } = message.payload; // Default to error if no level is specified
 
         // Validate the level
         const validLevels = ['debug', 'info', 'warn', 'error'];
-        if (typeof level !== 'string' || !validLevels.includes(level)) {
-            throw new InvalidRequestError('Invalid log level', { level });
+        if (levels) {
+            if (Array.isArray(levels)) {
+                for (const level of levels) {
+                    if (typeof level !== 'string' || !validLevels.includes(level)) {
+                        throw new InvalidRequestError('Invalid log level', { level });
+                    }
+                }
+            } else {
+                throw new InvalidRequestError('Invalid log levels', { levels });
+            }
         }
 
         // Validate the regex (if provided)
@@ -309,7 +325,7 @@ export class ServiceRegistry {
         }
 
         // Update the service's log subscriptions
-        service.logSubscriptions = { level, regex };
+        service.logSubscriptions = { levels, regex };
 
         // Subscribe to the log level and regex
         this.subscriptionManager.subscribe(serviceId, `system.log`);
@@ -334,7 +350,7 @@ export class ServiceRegistry {
         }
 
         // Reset log subscriptions to default (no level, no codes)
-        service.logSubscriptions = { level: '', regex: undefined };
+        service.logSubscriptions = { levels: [], regex: undefined };
 
         // Unsubscribe from the log level and regex
         this.subscriptionManager.unsubscribe(serviceId, `system.log`);
@@ -346,12 +362,12 @@ export class ServiceRegistry {
     }
 
     /**
-     * Handles a metric request.
+     * Handles a metrics request.
      *
      * @param serviceId The ID of the service requesting the metrics.
      * @param message The message to handle.
      */
-    private handleMetricRequest(serviceId: string, message: Message): void {
+    private handleMetricsRequest(serviceId: string, message: Message): void {
         // Check if the service exists
         const service = this.services.get(serviceId);
         if (!service) {
@@ -360,8 +376,7 @@ export class ServiceRegistry {
         }
 
         // TODO: Implement logic to fetch the latest metrics
-        // const metrics = this.monitoring.getLatestMetrics();
-        const metrics = this.monitoringManager.serializeMetrics();
+        const metrics = this.monitoringManager.serializeMetrics(message.payload.showAll);
 
         const responseHeader = { ...message.header, action: ActionType.RESPONSE };
         const responsePayload = { metrics };
@@ -396,7 +411,6 @@ export class ServiceRegistry {
      * @param message The message to handle.
      */
     private handleServiceRegister(serviceId: string, message: Message): void {
-        logger.info(`Service ${serviceId} registered with header:`, message.header, `and payload:`, message.payload);
         const { name, description } = message.payload;
 
         // Validate the payload

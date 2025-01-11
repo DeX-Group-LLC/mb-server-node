@@ -2,9 +2,11 @@ import { IncomingMessage } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { config } from '@config';
 import { InternalError } from '@core/errors';
-import logger from '@utils/logger';
+import { SetupLogger} from '@utils/logger';
 import { ConnectionManager } from './manager';
 import { Connection, ConnectionState } from './types';
+
+const logger = SetupLogger('WebSocketConnection');
 
 export class WebSocketConnection implements Connection {
     serviceId!: string; // This will be set by the ConnectionManager

@@ -6,7 +6,9 @@ import { MonitoringManager } from '@core/monitoring';
 import { ServiceRegistry } from '@core/registry';
 import { MessageRouter } from '@core/router';
 import { SubscriptionManager } from '@core/subscription';
-import logger from '@utils/logger';
+import { SetupLogger } from '@utils/logger';
+
+const logger = SetupLogger('MessageBroker');
 
 export class MessageBroker {
     private wss: WebSocketServer;
@@ -31,15 +33,15 @@ export class MessageBroker {
         this.messageRouter.assignServiceRegistry(this.serviceRegistry);
         this.wss = createWebSocketServer(this.connectionManager);
         this.createdAt = new Date();
-        logger.info(`[MessageBroker] Created at ${this.createdAt.toISOString()}`);
-        logger.info(`[MessageBroker] Listening on ${config.host}:${config.port} (WebSocket)`);
+        logger.info(`Created at ${this.createdAt.toISOString()}`);
+        logger.info(`Listening on ${config.host}:${config.port} (WebSocket)`);
     }
 
     /**
      * Shuts down the Message Broker.
      */
     async shutdown(): Promise<void> {
-        logger.info('[MessageBroker] Shutting down...');
+        logger.info('Shutting down...');
 
         // Clear all requests
         await this.messageRouter.dispose();
@@ -57,15 +59,15 @@ export class MessageBroker {
         await new Promise<void>((resolve, reject) => {
             this.wss.close((err) => {
                 if (err) {
-                    logger.error('[MessageBroker] Error closing WebSocket server:', err);
+                    logger.error('Error closing WebSocket server', { error: err });
                     reject(err);
                 } else {
-                    logger.info('[MessageBroker] WebSocket server closed');
+                    logger.info('WebSocket server closed');
                     resolve();
                 }
             });
         });
 
-        logger.info('[MessageBroker] Shutdown complete.');
+        logger.info('Shutdown complete.');
     }
 }

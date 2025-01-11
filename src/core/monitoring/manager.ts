@@ -1,7 +1,16 @@
 import { InternalError } from '@core/errors';
-import logger from '@utils/logger';
+import { SetupLogger } from '@utils/logger';
 import { Metric, ParameterizedMetric } from './metrics';
 import { BaseSlot, IReadOnlySlot } from './metrics/slots';
+
+const logger = SetupLogger('MonitoringManager');
+
+export interface MetricInfo {
+    name: string;
+    type: string;
+    timestamp: string;
+    value: number;
+}
 
 /**
  * Manages all metrics in the application, providing registration and lookup functionality.
@@ -110,25 +119,50 @@ export class MonitoringManager {
         this.metrics.clear();
         this.parameterizedMetrics.clear();
 
-        logger.info('[MonitoringManager] Cleared all metrics');
+        logger.info('Cleared all metrics');
     }
 
     /**
      * Serializes all metrics to a JSON object.
      * @returns A JSON object containing all metrics.
      */
-    serializeMetrics(): Record<string, any> {
-        const metrics: Record<string, any> = {};
-        // Serialize all metrics:
-        for (const metric of this.metrics.values()) {
-            metrics[metric.name] = metric.slot.value;
-        }
-        // Serialize all parameterized metrics:
-        for (const metric of this.parameterizedMetrics.values()) {
-            for (const metricInstance of metric.allMetrics) {
-                metrics[metricInstance.name] = metricInstance.slot.value;
+    serializeMetrics(showAll: boolean): Record<string, number> | Record<string, MetricInfo> {
+        if (showAll) {
+            const metrics: Record<string, MetricInfo> = {};
+            // Serialize all metrics:
+            for (const metric of this.metrics.values()) {
+                metrics[metric.name] = {
+                    name: metric.name,
+                    type: metric.slot.constructor.name.toLowerCase().replace('slot', ''),
+                    timestamp: metric.slot.lastModified.toISOString(),
+                    value: metric.slot.value
+                };
             }
+            // Serialize all parameterized metrics:
+            for (const metric of this.parameterizedMetrics.values()) {
+                for (const metricInstance of metric.allMetrics) {
+                    metrics[metricInstance.name] = {
+                        name: metricInstance.name,
+                        type: metricInstance.slot.constructor.name.toLowerCase().replace('slot', ''),
+                        timestamp: metricInstance.slot.lastModified.toISOString(),
+                        value: metricInstance.slot.value
+                    };
+                }
+            }
+            return metrics;
+        } else {
+            const metrics: Record<string, number> = {};
+            // Serialize all metrics:
+            for (const metric of this.metrics.values()) {
+                metrics[metric.name] = metric.slot.value;
+            }
+            // Serialize all parameterized metrics:
+            for (const metric of this.parameterizedMetrics.values()) {
+                for (const metricInstance of metric.allMetrics) {
+                    metrics[metricInstance.name] = metricInstance.slot.value;
+                }
+            }
+            return metrics;
         }
-        return metrics;
     }
 }
