@@ -100,7 +100,7 @@ export class ConnectionManager {
         }
 
         connection.send(MessageUtils.serialize(header, payload));
-        //logger.debug(`[ConnectionManager] Sent message to service ${serviceId}`);
+        //logger.debug(`Sent message ${header.action}:${header.topic}:${header.version}:${header.requestid ? ':' +header.requestid : ''} to ${serviceId}`, { header, payload, serviceId });
     }
 
     /**
@@ -113,7 +113,7 @@ export class ConnectionManager {
         let header: Header | null = null;
         let payload: Payload | null = null;
 
-        //logger.debug(`[ConnectionManager] Received message from service ${connection.serviceId} (IP ${connection.ip})`);
+        //logger.debug(`Received message from service ${connection.serviceId} (IP ${connection.ip})`);
 
         try {
             // Create the parser and parse the message

@@ -190,7 +190,7 @@ export class ServiceRegistry {
      * @param message The received message.
      */
     handleSystemMessage(serviceId: string, message: Message): void {
-        logger.info(`Received system message from ${serviceId}`, { header: message.header });
+        logger.info(`Received system message ${message.header.action}:${message.header.topic}:${message.header.version}:${message.header.requestid ? ':' +message.header.requestid : ''}`, { header: message.header, serviceId });
 
         // Check the actions are valid
         if (message.header.topic === 'system.heartbeat') {
@@ -236,7 +236,7 @@ export class ServiceRegistry {
                     throw new TopicNotSupportedError(`Unknown system message topic: ${message.header.topic}`);
             }
         } catch (error) {
-            logger.error(`Error handling system message from ${serviceId}:`, error);
+            logger.error(`Error handling system message ${message.header.action}:${message.header.topic}:${message.header.version}:${message.header.requestid ? ':' +message.header.requestid : ''}:`, { error, serviceId });
             this.metrics.serviceErrorRate.getMetric({ serviceId })?.slot.add(1);
             throw error;
         }
