@@ -128,24 +128,24 @@ export class ConnectionManager {
             header = header !== null ? { ...header, action: ActionType.RESPONSE } : ERROR_HEADER;
             // If the error is a MessageError, send an error message to the client
             if (error instanceof MessageError) {
-                logger.error(`[${error.code}] ${error.message}`, error.details);
+                logger.error(`[${error.code}] ${error.message}`, { serviceId: connection.serviceId, error });
                 connection.send(MessageUtils.serialize(header, { error: error.toJSON() }));
                 return;
             } else if (error instanceof Error) {
                 if (header == ERROR_HEADER) {
                     // If the header is null, the message is malformed
-                    logger.error('Unexpected error while parsing message header:', error);
+                    logger.error('Unexpected error while parsing message header:', { serviceId: connection.serviceId, error });
                     connection.send(MessageUtils.serialize(header, { error: new MalformedMessageError('Unexpected error while parsing message header').toJSON() }));
                     return;
                 } else if (payload == null) {
                     // If the payload is null, the message is malformed
-                    logger.error('Unexpected error while parsing message payload:', error);
+                    logger.error('Unexpected error while parsing message payload:', { serviceId: connection.serviceId, error });
                     connection.send(MessageUtils.serialize(header, { error: new MalformedMessageError('Unexpected error while parsing message payload').toJSON() }));
                     return;
                 } else {
                     // If the error is not a MessageError and the header and payload are not null, then the error is during routing
                     // Send an internal error message to the client
-                    logger.error('An unexpected error while routing the message:', error);
+                    logger.error('An unexpected error while routing the message:', { serviceId: connection.serviceId, error });
                     connection.send(MessageUtils.serialize(header, { error: new InternalError('An unexpected error while routing the message').toJSON() }));
                     return;
                 }

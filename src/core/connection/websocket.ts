@@ -65,7 +65,7 @@ export function createWebSocketServer(connectionManager: ConnectionManager): Web
         connectionManager.addConnection(connection);
 
         ws.on('error', (error: Error) => {
-            logger.error(`WebSocket error from service ${connection.serviceId} (IP ${ip}):`, error);
+            logger.error(`WebSocket error from service ${connection.serviceId} (IP ${ip}):`, { serviceId: connection.serviceId, error });
             connectionManager.removeConnection(connection.serviceId);
         });
     });

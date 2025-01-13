@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import { InternalError } from '@core/errors';
-import { BaseSlot, IManageableSlot, GaugeSlot } from './slots';
+import { BaseSlot } from './slots';
 
 // Regex for validating metric names (supports parameterized names)
 const METRIC_NAME_REGEX = /^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*|\.\{[a-z]+:[^:}]+\}){0,4}$/;

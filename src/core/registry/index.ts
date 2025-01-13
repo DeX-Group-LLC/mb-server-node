@@ -12,6 +12,7 @@ import { ActionType } from '@core/types';
 import { Header, Message, TopicUtils } from '@core/utils';
 import { SetupLogger } from '@utils/logger';
 import { RegistryMetrics } from './metrics';
+import { isUUID4 } from '@core/utils/uuid4';
 
 const logger = SetupLogger('ServiceRegistry');
 
@@ -112,7 +113,7 @@ export class ServiceRegistry {
      * @param name The name of the service. Defaults to the serviceId.
      * @param description The description of the service. Defaults to 'No description provided'.
      */
-    registerService(serviceId: string, name: string = serviceId, description: string = 'No description provided'): void {
+    registerService(serviceId: string, name: string = '', description: string = ''): void {
         // Update the last heartbeat
         const now = new Date();
 
@@ -190,7 +191,7 @@ export class ServiceRegistry {
      * @param message The received message.
      */
     handleSystemMessage(serviceId: string, message: Message): void {
-        logger.info(`Received system message ${message.header.action}:${message.header.topic}:${message.header.version}:${message.header.requestid ? ':' +message.header.requestid : ''}`, { header: message.header, serviceId });
+        logger.debug(`Received system message ${message.header.action}:${message.header.topic}:${message.header.version}${message.header.requestid ? ':' +message.header.requestid : ''}`, { serviceId, header: message.header });
 
         // Check the actions are valid
         if (message.header.topic === 'system.heartbeat') {
@@ -220,11 +221,17 @@ export class ServiceRegistry {
                 case 'system.service.list':
                     this.handleServiceList(serviceId, message);
                     break;
+                case 'system.service.subscriptions':
+                    this.handleServiceSubscriptions(serviceId, message);
+                    break;
                 case 'system.service.register':
                     this.handleServiceRegister(serviceId, message);
                     break;
                 case 'system.topic.list':
                     this.handleTopicList(serviceId, message);
+                    break;
+                case 'system.topic.subscribers':
+                    this.handleTopicSubscribers(serviceId, message);
                     break;
                 case 'system.topic.subscribe':
                     this.handleTopicSubscribe(serviceId, message);
@@ -236,7 +243,7 @@ export class ServiceRegistry {
                     throw new TopicNotSupportedError(`Unknown system message topic: ${message.header.topic}`);
             }
         } catch (error) {
-            logger.error(`Error handling system message ${message.header.action}:${message.header.topic}:${message.header.version}:${message.header.requestid ? ':' +message.header.requestid : ''}:`, { error, serviceId });
+            logger.error(`Error handling system message ${message.header.action}:${message.header.topic}:${message.header.version}:${message.header.requestid ? ':' +message.header.requestid : ''}:`, { serviceId, error });
             this.metrics.serviceErrorRate.getMetric({ serviceId })?.slot.add(1);
             throw error;
         }
@@ -328,7 +335,9 @@ export class ServiceRegistry {
         service.logSubscriptions = { levels, regex };
 
         // Subscribe to the log level and regex
-        this.subscriptionManager.subscribe(serviceId, `system.log`);
+        if (!this.subscriptionManager.isSubscribed(serviceId, 'system.log')) {
+            this.subscriptionManager.subscribe(serviceId, 'system.log');
+        }
 
         // Send a success response
         const responseHeader = { ...message.header, action: ActionType.RESPONSE };
@@ -395,6 +404,7 @@ export class ServiceRegistry {
             name: service.name,
             description: service.description,
             connectedAt: service.connectedAt,
+            lastHeartbeat: service.lastHeartbeat.toISOString(),
         }));
 
         const responseHeader = { ...message.header, action: ActionType.RESPONSE };
@@ -402,6 +412,39 @@ export class ServiceRegistry {
         this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
 
         this.metrics.discoveryRate.slot.add(1);
+    }
+
+    /**
+     * Handles a service subscriptions request.
+     *
+     * @param serviceId The ID of the service requesting the subscriptions.
+     * @param message The message to handle.
+     */
+    private handleServiceSubscriptions(serviceId: string, message: Message): void {
+        const service = this.services.get(serviceId);
+        if (!service) {
+            this.connectionManager.removeConnection(serviceId);
+            throw new ServiceUnavailableError(`Service ${serviceId} not found`);
+        }
+
+        let targetServiceId = message.payload.serviceId ?? serviceId;
+
+        // Check if the topic is valid
+        if (typeof targetServiceId !== 'string' || !isUUID4(targetServiceId)) {
+            throw new InvalidRequestError('Invalid serviceId', { serviceId: targetServiceId });
+        }
+
+        const targetService = this.services.get(targetServiceId);
+        if (!targetService) {
+            throw new ServiceUnavailableError(`Service ${targetServiceId} not found`);
+        }
+
+        // Get the latest subscriptions for the service given:
+        const subscriptions = this.subscriptionManager.getSubscribedTopics(targetServiceId);
+
+        const responseHeader = { ...message.header, action: ActionType.RESPONSE };
+        const responsePayload = { subscriptions };
+        this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
     }
 
     /**
@@ -437,6 +480,19 @@ export class ServiceRegistry {
         const topics = this.subscriptionManager.getAllSubscribedTopics();
         const responseHeader = { ...message.header, action: ActionType.RESPONSE };
         const responsePayload = { topics };
+        this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
+    }
+
+    /**
+     * Handles a topic subscribers request.
+     *
+     * @param serviceId The ID of the service requesting the subscribers.
+     * @param message The message to handle.
+     */
+    private handleTopicSubscribers(serviceId: string, message: Message): void {
+        const subscribers = this.subscriptionManager.getAllSubscribedTopicWithSubscribers();
+        const responseHeader = { ...message.header, action: ActionType.RESPONSE };
+        const responsePayload = { subscribers };
         this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
     }
 

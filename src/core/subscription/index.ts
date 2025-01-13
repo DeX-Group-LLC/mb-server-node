@@ -51,7 +51,7 @@ export class SubscriptionManager {
         }
         subscribers.splice(i, 0, newSubscriber);
 
-        logger.info(`Service ${serviceId} subscribed to topic: ${canonicalTopic} with priority ${priority}`);
+        logger.info(`Service subscribed to topic:${canonicalTopic} with priority:${priority}`, { serviceId, topic: canonicalTopic, priority });
         return true;
     }
 
@@ -94,6 +94,19 @@ export class SubscriptionManager {
             }
             return true;
         }
+    }
+
+    /**
+     * Checks if a service is subscribed to a topic.
+     *
+     * @param serviceId The ID of the service to check.
+     * @param topic The topic to check for subscription.
+     * @returns True if the service is subscribed to the topic, false otherwise.
+     */
+    isSubscribed(serviceId: string, topic: string): boolean {
+        const canonicalTopic = TopicUtils.getCanonical(topic);
+        const subscribers = this.subscriptions.get(canonicalTopic);
+        return subscribers ? subscribers.some(sub => sub.serviceId === serviceId) : false;
     }
 
     /**
@@ -148,6 +161,14 @@ export class SubscriptionManager {
      */
     getAllSubscribedTopics(): string[] {
         return Array.from(this.subscriptions.keys()).sort();
+    }
+
+    getAllSubscribedTopicWithSubscribers(): Record<string, Subscriber[]> {
+        const result: Record<string, Subscriber[]> = {};
+        for (const [topic, subscribers] of this.subscriptions) {
+            result[topic] = subscribers;
+        }
+        return result;
     }
 
     /**

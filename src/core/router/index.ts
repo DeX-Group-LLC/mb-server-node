@@ -200,7 +200,7 @@ export class MessageRouter {
             const responseHeader = { ...request.originalHeader, action: ActionType.RESPONSE };
             this.connectionManager.sendMessage(request.originServiceId, responseHeader, message.payload);
             if (message.payload.error) {
-                logger.warn(`Error received from service: ${request.targetServiceId} for request: ${request.targetRequestId}`, message.payload.error);
+                logger.warn(`Error received from service: ${request.targetServiceId} for request: ${request.targetRequestId}`, { serviceId: request.targetServiceId, error: message.payload.error });
             }
             if (request.originalRequestId) {
                 logger.info(`Sent request response to service: ${request.originServiceId} for request: ${request.originalRequestId}`);

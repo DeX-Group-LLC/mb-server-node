@@ -1,7 +1,6 @@
 import { EventEmitter } from 'events';
 import { InternalError } from '@core/errors';
 import { Metric } from './metric';
-import { IReadOnlySlot, IManageableSlot, RateSlot } from './slots';
 import { BaseSlot } from './slots/base';
 
 // Regex for validating metric templates with parameters

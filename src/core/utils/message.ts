@@ -4,9 +4,7 @@ import { MalformedMessageError } from '@core/errors';
 import { ActionType } from '@core/types';
 import { Header, Payload } from '@core/utils/types';
 import * as topic from '@core/utils/topic';
-
-const REQUEST_ID_REGEX = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
-
+import { isUUID4 } from '@core/utils/uuid4';
 /**
  * Pretty-prints a file size in bytes to a human-readable format
  * @param {number} size - The file size in bytes
@@ -79,7 +77,7 @@ export class Parser {
         }
 
         // Validate the request ID
-        if (header.requestid && !REQUEST_ID_REGEX.test(header.requestid)) {
+        if (header.requestid && !isUUID4(header.requestid)) {
             throw new MalformedMessageError(`Invalid request ID format: ${header.requestid}`, { requestId: header.requestid });
         }
 
