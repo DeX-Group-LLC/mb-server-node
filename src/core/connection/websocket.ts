@@ -17,9 +17,9 @@ export class WebSocketConnection implements Connection {
         return this.ws.readyState === WebSocket.OPEN ? ConnectionState.OPEN : ConnectionState.CLOSED;
     }
 
-    onMessage(listener: (message: string) => void): void {
+    onMessage(listener: (message: Buffer) => void): void {
         this.ws.on('message', (buffer: Buffer) => {
-            listener(buffer.toString());
+            listener(buffer);
         });
     }
 

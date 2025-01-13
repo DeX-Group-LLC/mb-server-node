@@ -109,7 +109,7 @@ export class ConnectionManager {
      * @param connection The connection that received the message.
      * @param message The message to handle.
      */
-    private handleMessage(connection: Connection, message: string): void {
+    private handleMessage(connection: Connection, message: Buffer): void {
         let header: Header | null = null;
         let payload: Payload | null = null;
 
@@ -122,7 +122,7 @@ export class ConnectionManager {
             payload = parser.parsePayload(header.action);
 
             // Route the message to the message router
-            this.messageRouter.routeMessage(connection.serviceId, { header, payload });
+            this.messageRouter.routeMessage(connection.serviceId, { header, payload, size: message.length });
         } catch (error) {
             // Set the action to Response
             header = header !== null ? { ...header, action: ActionType.RESPONSE } : ERROR_HEADER;

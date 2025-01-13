@@ -28,7 +28,7 @@ export class MessageBroker {
         this.monitorManager = new MonitoringManager();
         this.systemManager = new SystemManager(this.monitorManager);
         this.subscriptionManager = new SubscriptionManager();
-        this.messageRouter = new MessageRouter(this.subscriptionManager);
+        this.messageRouter = new MessageRouter(this.subscriptionManager, this.monitorManager);
         this.serviceRegistry = new ServiceRegistry(this.subscriptionManager, this.monitorManager);
         this.connectionManager = new ConnectionManager(this.messageRouter, this.serviceRegistry, this.monitorManager);
         this.serviceRegistry.assignConnectionManager(this.connectionManager);

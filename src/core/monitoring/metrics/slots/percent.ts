@@ -1,5 +1,4 @@
 import { GaugeSlot } from './gauge';
-import { ISlotAddable, ISlotSettable } from './interface';
 
 /**
  * A slot for tracking percentage values between 0 and 1

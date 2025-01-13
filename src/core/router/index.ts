@@ -7,6 +7,8 @@ import { SubscriptionManager } from '@core/subscription';
 import { ActionType } from '@core/types';
 import { Message, Header } from '@core/utils';
 import { SetupLogger } from '@utils/logger';
+import { RouterMetrics } from './metrics';
+import { MonitoringManager } from '@core/monitoring/manager';
 
 const logger = SetupLogger('MessageRouter');
 
@@ -25,10 +27,12 @@ export class MessageRouter {
     private subscriptionManager: SubscriptionManager;
     private connectionManager!: ConnectionManager;
     private serviceRegistry!: ServiceRegistry;
+    private metrics: RouterMetrics;
 
-    constructor(subscriptionManager: SubscriptionManager) {
+    constructor(subscriptionManager: SubscriptionManager, monitoringManager: MonitoringManager) {
         this.requests = new Map();
         this.subscriptionManager = subscriptionManager;
+        this.metrics = new RouterMetrics(monitoringManager);
     }
 
     /**
@@ -61,29 +65,61 @@ export class MessageRouter {
         // Reset the heartbeat for the service
         this.serviceRegistry.resetHeartbeat(serviceId);
 
-        // Handle system messages
-        if (topic.startsWith('system.')) {
-            this.serviceRegistry.handleSystemMessage(serviceId, message);
-            return;
-        }
+        // Track messages and size
+        this.metrics.messageCount.slot.add(1);
+        this.metrics.messageRate.slot.add(1);
+        this.metrics.messageSizeAvg.slot.add(message.size);
+        this.metrics.messageSizeMax.slot.add(message.size);
 
-        switch (action) {
-            case ActionType.PUBLISH:
-                this.handlePublish(serviceId, message);
-                break;
-            case ActionType.REQUEST:
-                this.handleRequest(serviceId, message);
-                break;
-            case ActionType.RESPONSE:
-                this.handleResponse(serviceId, message);
-                break;
-            default:
-                // This should never happen
-                const exhaustiveCheck: never = action;
-                logger.error(`Unknown action type: ${exhaustiveCheck}`);
-                const header = { ...message.header, action: ActionType.RESPONSE };
-                const payload = { error: new MalformedMessageError(`Unknown action type: ${action}`).toJSON() };
-                this.connectionManager.sendMessage(serviceId, header, payload);
+        try {
+            switch (action) {
+                case ActionType.PUBLISH:
+                    this.metrics.publishCount.slot.add(1);
+                    this.metrics.publishRate.slot.add(1);
+                    try {
+                        this.handlePublish(serviceId, message);
+                    } catch (error) {
+                        this.metrics.publishCountError.slot.add(1);
+                        this.metrics.publishRateError.slot.add(1);
+                        throw error;
+                    }
+                    break;
+                case ActionType.REQUEST:
+                    this.metrics.requestCount.slot.add(1);
+                    this.metrics.requestRate.slot.add(1);
+                    try {
+                        this.handleRequest(serviceId, message);
+                    } catch (error) {
+                        this.metrics.requestCountError.slot.add(1);
+                        this.metrics.requestRateError.slot.add(1);
+                        throw error;
+                    }
+                    break;
+                case ActionType.RESPONSE:
+                    this.metrics.responseCount.slot.add(1);
+                    this.metrics.responseRate.slot.add(1);
+                    try {
+                        this.handleResponse(serviceId, message);
+                    } catch (error) {
+                        this.metrics.responseCountError.slot.add(1);
+                        this.metrics.responseRateError.slot.add(1);
+                        throw error;
+                    }
+                    break;
+                default:
+                    // This should never happen
+                    const exhaustiveCheck: never = action;
+                    logger.error(`Unknown action type: ${exhaustiveCheck}`);
+                    this.metrics.messageCountError.slot.add(1);
+                    this.metrics.messageRateError.slot.add(1);
+                    const header = { ...message.header, action: ActionType.RESPONSE };
+                    const payload = { error: new MalformedMessageError(`Unknown action type: ${action}`).toJSON() };
+                    this.connectionManager.sendMessage(serviceId, header, payload);
+            }
+        } catch (error) {
+            this.metrics.messageCountError.slot.add(1);
+            this.metrics.messageRateError.slot.add(1);
+            throw error;
         }
     }
 
@@ -98,6 +134,12 @@ export class MessageRouter {
         const { topic } = message.header;
         const responseHeader: Header = { ...message.header, action: ActionType.RESPONSE };
 
+        // Handle system messages
+        if (topic.startsWith('system.')) {
+            this.serviceRegistry.handleSystemMessage(serviceId, message);
+            return true;
+        }
+
         // Check if the topic has any subscribers
         const subscribers = this.subscriptionManager.getSubscribers(topic);
         if (subscribers.length === 0) {
@@ -105,6 +147,8 @@ export class MessageRouter {
             // Send an error response to the requester
             const responsePayload = { error: new NoRouteFoundError(`No subscribers for topic ${topic}`).toJSON() };
             this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
+            this.metrics.publishCountDropped.slot.add(1);
+            this.metrics.publishRateDropped.slot.add(1);
             return false;
         }
 
@@ -136,14 +180,26 @@ export class MessageRouter {
     private handleRequest(serviceId: string, message: Message): boolean {
         const { topic } = message.header;
 
+        // Handle system messages
+        if (topic.startsWith('system.')) {
+            this.serviceRegistry.handleSystemMessage(serviceId, message);
+            return true;
+        }
+
         // Check if the topic has any subscribers
         const subscribers = this.subscriptionManager.getTopSubscribers(topic);
         if (!subscribers || subscribers.length === 0) {
-            logger.debug(`No subscribers for topic: ${topic}`);
-            // Send an error response to the requester
+            throw new NoRouteFoundError(`No subscribers for topic ${topic}`);
+        }
+
+        // Check if the number of outstanding requests has reached the limit
+        if (this.requests.size >= config.max.outstanding.requests) {
+            logger.warn(`Maximum number of outstanding requests reached (${config.max.outstanding.requests})`);
             const responseHeader = { ...message.header, action: ActionType.RESPONSE };
-            const responsePayload = { error: new NoRouteFoundError(`No subscribers for topic ${topic}`).toJSON() };
+            const responsePayload = { error: new ServiceUnavailableError('Maximum number of outstanding requests reached').toJSON() };
             this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
+            this.metrics.requestCountDropped.slot.add(1);
+            this.metrics.requestRateDropped.slot.add(1);
             return false;
         }
 
@@ -174,22 +230,22 @@ export class MessageRouter {
      */
     private handleResponse(serviceId: string, message: Message): boolean {
         const targetRequestId = message.header.requestid;
+        const { topic } = message.header;
+
+        // Handle system messages
+        if (topic.startsWith('system.')) {
+            this.serviceRegistry.handleSystemMessage(serviceId, message);
+            return true;
+        }
+
         if (!targetRequestId) {
-            logger.warn(`Received response message without requestId from service: ${serviceId}`);
-            const responseHeader = { ...message.header, action: ActionType.RESPONSE };
-            const payload = { error: new InvalidRequestIdError('Received response message without requestId.').toJSON() };
-            this.connectionManager.sendMessage(serviceId, responseHeader, payload);
-            return false;
+            throw new InvalidRequestIdError('Received response message without requestId.');
         }
 
         // Get the request out from the requestsOut map
         const request = this.getRequest(serviceId, targetRequestId);
         if (!request) {
-            logger.warn(`No matching request found for requestId: ${targetRequestId} to service: ${serviceId}`);
-            const responseHeader = { ...message.header, action: ActionType.RESPONSE };
-            const payload = { error: new InvalidRequestIdError(`No matching request found for requestId: ${targetRequestId}`).toJSON() };
-            this.connectionManager.sendMessage(serviceId, responseHeader, payload);
-            return false;
+            throw new InvalidRequestIdError(`No matching request found for requestId: ${targetRequestId}`);
         }
 
         // Remove the request from the map (which also clears the timeout associated with the request)
@@ -201,11 +257,13 @@ export class MessageRouter {
             this.connectionManager.sendMessage(request.originServiceId, responseHeader, message.payload);
             if (message.payload.error) {
                 logger.warn(`Error received from service: ${request.targetServiceId} for request: ${request.targetRequestId}`, { serviceId: request.targetServiceId, error: message.payload.error });
+                this.metrics.responseCountError.slot.add(1);
+                this.metrics.responseRateError.slot.add(1);
             }
             if (request.originalRequestId) {
-                logger.info(`Sent request response to service: ${request.originServiceId} for request: ${request.originalRequestId}`);
+                logger.debug(`Sent request response to service: ${request.originServiceId} for request: ${request.originalRequestId}`);
             } else {
-                logger.info(`Sent request response to service: ${request.originServiceId}`);
+                logger.debug(`Sent request response to service: ${request.originServiceId}`);
             }
         }
 
@@ -234,6 +292,10 @@ export class MessageRouter {
                 this.requests.delete(`${targetServiceId}:${targetRequestId}`);
                 logger.warn(`Request ${originServiceId}:${originalHeader.requestid} to ${targetServiceId}:${targetRequestId} timed out`);
 
+                // Track timeout metrics
+                this.metrics.requestCountTimeout.slot.add(1);
+                this.metrics.requestRateTimeout.slot.add(1);
+
                 // Send a timeout error back to the original requester
                 const responsePayload = { error: new TimeoutError('Request timed out').toJSON() };
                 const responseHeader = { ...originalHeader, action: ActionType.RESPONSE };
@@ -259,6 +321,8 @@ export class MessageRouter {
                 const responsePayload = { error: new ServiceUnavailableError('Message broker is busy').toJSON() };
                 this.connectionManager.sendMessage(oldestRequest.originServiceId, responseHeader, responsePayload);
                 logger.warn(`Removed oldest request ${oldestRequest.originalRequestId} from ${oldestRequest.originServiceId} due to exceeding max outstanding requests`);
+                this.metrics.requestCountDropped.slot.add(1);
+                this.metrics.requestRateDropped.slot.add(1);
             }
         }
 
@@ -305,12 +369,15 @@ export class MessageRouter {
      * Disposes of all outstanding requests and their associated timeouts.
      */
     async dispose(): Promise<void> {
+        // Clear all timeouts
         for (const request of this.requests.values()) {
             if (request.timeout) {
                 clearTimeout(request.timeout);
             }
         }
         this.requests.clear();
-        logger.info('Cleared all outstanding requests');
+
+        // Dispose metrics
+        this.metrics.dispose();
     }
 }

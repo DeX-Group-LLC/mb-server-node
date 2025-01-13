@@ -61,4 +61,7 @@ export interface Message {
 
     /** Message content and data */
     payload: Payload;
+
+    /** The size of the message in bytes */
+    size: number;
 }

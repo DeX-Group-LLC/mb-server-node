@@ -7,18 +7,21 @@ import { SubscriptionManager } from '@core/subscription';
 import { ActionType } from '@core/types';
 import { Header, Message } from '@core/utils';
 import logger from '@utils/logger';
+import { MonitoringManager } from '@core/monitoring/manager';
 
 // Mock external dependencies to isolate MessageRouter tests
 jest.mock('@core/connection/manager');
 jest.mock('@core/registry');
 jest.mock('@core/subscription');
 jest.mock('@utils/logger');
+jest.mock('@core/monitoring/manager');
 
 describe('MessageRouter', () => {
     let messageRouter: MessageRouter;
     let mockConnectionManager: jest.Mocked<ConnectionManager>;
     let mockServiceRegistry: jest.Mocked<ServiceRegistry>;
     let mockSubscriptionManager: jest.Mocked<SubscriptionManager>;
+    let mockMonitoringManager: jest.Mocked<MonitoringManager>;
 
     beforeEach(() => {
         // Reset all mock implementations and call history before each test
@@ -37,8 +40,19 @@ describe('MessageRouter', () => {
             handleSystemMessage: jest.fn(),
         } as unknown as jest.Mocked<ServiceRegistry>;
 
-        // Create MessageRouter with mock subscription manager
-        messageRouter = new MessageRouter(mockSubscriptionManager);
+        // Create mock MonitoringManager with basic implementations
+        mockMonitoringManager = {
+            registerMetric: jest.fn().mockReturnValue({
+                slot: {
+                    add: jest.fn(),
+                    dispose: jest.fn(),
+                },
+                dispose: jest.fn(),
+            }),
+        } as unknown as jest.Mocked<MonitoringManager>;
+
+        // Create MessageRouter with mock managers
+        messageRouter = new MessageRouter(mockSubscriptionManager, mockMonitoringManager);
 
         // Create mock ConnectionManager with basic implementations
         mockConnectionManager = {
