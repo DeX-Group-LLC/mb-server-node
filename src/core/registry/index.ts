@@ -385,7 +385,7 @@ export class ServiceRegistry {
         }
 
         // TODO: Implement logic to fetch the latest metrics
-        const metrics = this.monitoringManager.serializeMetrics(message.payload.showAll);
+        const metrics = this.monitoringManager.serializeMetrics(message.payload.showAll, message.payload.paramFilter);
 
         const responseHeader = { ...message.header, action: ActionType.RESPONSE };
         const responsePayload = { metrics };
@@ -440,7 +440,7 @@ export class ServiceRegistry {
         }
 
         // Get the latest subscriptions for the service given:
-        const subscriptions = this.subscriptionManager.getSubscribedTopics(targetServiceId);
+        const subscriptions = this.subscriptionManager.getSubscribedInfo(targetServiceId);
 
         const responseHeader = { ...message.header, action: ActionType.RESPONSE };
         const responsePayload = { subscriptions };

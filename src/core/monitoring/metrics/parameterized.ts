@@ -222,6 +222,40 @@ export class ParameterizedMetric<TSlot extends BaseSlot = BaseSlot> extends Even
     }
 
     /**
+     * Checks if the template has all the required parameters.
+     * @param params - The parameters to check
+     * @returns True if the template has all the required parameters, false otherwise
+     */
+    hasParams(params: Record<string, string>): boolean {
+        for (const param of Object.keys(params)) {
+            // Check if the template has the parameter
+            if (!this.template.includes(`{${param.toLowerCase()}}`)) return false;
+        }
+        return true;
+    }
+
+    /**
+     * Filters metrics based on the given parameter values.
+     * @param params - The parameters to filter by
+     * @returns An iterator of metrics that match the given parameters
+     */
+    *filteredMetrics(params: Record<string, string>): IterableIterator<Metric<TSlot>> {
+        // Check if the template has all the required parameters
+        if (!this.hasParams(params)) return;
+
+        // Serialize the params to match the metric names
+        const serializedParams = Object.entries(params).map(([key, value]) => `{${key.toLowerCase()}:${value}}`);
+
+        // Return all metrics that match the given parameters
+        for (const metric of this.metrics.values()) {
+            // Check if the metric has the serialized param names:
+            if (serializedParams.every(param => metric.name.includes(param))) {
+                yield metric;
+            }
+        }
+    }
+
+    /**
      * Gets all metrics registered for this template.
      */
     get allMetrics(): IterableIterator<Metric<TSlot>> {

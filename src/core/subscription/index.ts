@@ -155,6 +155,23 @@ export class SubscriptionManager {
     }
 
     /**
+     * Gets the set of topics that a service is subscribed to.
+     *
+     * @param serviceId The ID of the service to get subscribed topics for.
+     * @returns An array of topic names that the service is subscribed to.
+     */
+    getSubscribedInfo(serviceId: string): { topic: string; priority: number }[] {
+        const subscribedTopics: { topic: string; priority: number }[] = [];
+        for (const [topic, subscribers] of this.subscriptions) {
+            const index = subscribers.findIndex(sub => sub.serviceId === serviceId);
+            if (index >= 0) {
+                subscribedTopics.push({ topic, priority: subscribers[index].priority });
+            }
+        }
+        return subscribedTopics.sort((a, b) => a.topic.localeCompare(b.topic)); // Sort by topic
+    }
+
+    /**
      * Gets all the unique topics that have at least one subscriber.
      *
      * @returns An array of unique topic names that have subscribers.
