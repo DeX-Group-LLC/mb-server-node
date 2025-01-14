@@ -1,4 +1,4 @@
-# message-broker-node
+# Message Broker (MB) Server - Node.js Reference Implementation
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue?style=square)](https://opensource.org/licenses/Apache-2.0)
 [![Tests Status](https://github.com/DeX-Group-LLC/message-broker-node/actions/workflows/tests.yml/badge.svg?style=square)](https://github.com/DeX-Group-LLC/message-broker-node/actions/workflows/tests.yml)
 [![Coverage Status](https://coveralls.io/repos/github/DeX-Group-LLC/message-broker-node/badge.svg?branch=main&style=square)](https://coveralls.io/github/DeX-Group-LLC/message-broker-node?branch=main)
@@ -41,10 +41,10 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/DeX-Group-LLC/message-broker-node.git
+git clone https://github.com/DeX-Group-LLC/mb-server.git
 
 # Install dependencies
-cd message-broker-node
+cd mb-server
 npm install
 
 # Start the broker
