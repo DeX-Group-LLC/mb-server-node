@@ -22,6 +22,8 @@ export function prettySize(size: number): string {
     }
 }
 
+const NEWLINE_CHAR = '\n'.charCodeAt(0);
+
 /**
  * Parses a message string into a Message object.
  */
@@ -32,8 +34,8 @@ export class Parser {
      * Constructs a new Parser instance.
      * @param message The message string to parse.
      */
-    constructor(private message: string) {
-        this.newlineIndex = message.indexOf('\n');
+    constructor(private message: Buffer) {
+        this.newlineIndex = message.indexOf(NEWLINE_CHAR);
         if (this.newlineIndex === -1) {
             throw new MalformedMessageError('Invalid message format: no newline separator found');
         }
@@ -45,7 +47,7 @@ export class Parser {
      * @throws MalformedMessageError if the message format is invalid.
      */
     public parseHeader(): Header {
-        const headerLine = this.message.substring(0, this.newlineIndex);
+        const headerLine = this.message.toString('utf-8', 0, this.newlineIndex);
         const headerParts = headerLine.split(':');
 
         if (headerParts.length < 3) {
@@ -97,7 +99,7 @@ export class Parser {
             throw new MalformedMessageError(`Payload exceeds maximum length of ${prettyPayloadLength}`, { payloadLength: this.message.length - this.newlineIndex - 1 });
         }
 
-        const payloadStr = this.message.substring(this.newlineIndex + 1);
+        const payloadStr = this.message.toString('utf-8', this.newlineIndex + 1);
         let payload: Payload = {};
         if (payloadStr) {
             try {

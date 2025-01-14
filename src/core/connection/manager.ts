@@ -117,7 +117,7 @@ export class ConnectionManager {
 
         try {
             // Create the parser and parse the message
-            const parser = new MessageUtils.Parser(message.toString());
+            const parser = new MessageUtils.Parser(message);
             header = parser.parseHeader();
             payload = parser.parsePayload(header.action);
 
