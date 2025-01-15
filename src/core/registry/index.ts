@@ -114,6 +114,11 @@ export class ServiceRegistry {
      * @param description The description of the service. Defaults to 'No description provided'.
      */
     registerService(serviceId: string, name: string = '', description: string = ''): void {
+        // Check if name is longer than 36 characters
+        if (name.length > 36) throw new InvalidRequestError('Name of service is too long', { name });
+        // Check if description is longer than 1024 characters
+        if (description.length > 1024) throw new InvalidRequestError('Description of service is too long', { description });
+
         // Update the last heartbeat
         const now = new Date();
 
