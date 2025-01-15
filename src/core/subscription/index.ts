@@ -30,26 +30,32 @@ export class SubscriptionManager {
             return false;
         }
 
-        if (!this.subscriptions.has(canonicalTopic)) {
-            this.subscriptions.set(canonicalTopic, []);
+        let subscribers = this.subscriptions.get(canonicalTopic);
+        if (!subscribers) {
+            subscribers = [];
+            this.subscriptions.set(canonicalTopic, subscribers);
         }
 
-        const subscribers = this.subscriptions.get(canonicalTopic)!;
-
-        // Check if already subscribed
-        if (subscribers.some(sub => sub.serviceId === serviceId)) {
-            logger.warn(`Service ${serviceId} is already subscribed to topic: ${canonicalTopic}`);
-            return false;
-        }
-
-        // Insert the new subscriber, maintaining priority order
-        const newSubscriber = { serviceId, priority };
         let i = 0;
-        // Iterate while priority is greater OR equal and we haven't reached the end
-        while (i < subscribers.length && subscribers[i].priority >= priority) {
+        let index = 0;
+        // Iterate while priority is greater OR equal and check for existing subscription
+        while (i < subscribers.length) {
+            if (subscribers[i].serviceId === serviceId) {
+                if (subscribers[i].priority === priority) {
+                    logger.info(`Service ${serviceId} is already subscribed to topic: ${canonicalTopic} with priority: ${priority}`);
+                    return false;
+                } else {
+                    logger.debug(`Service ${serviceId} is already subscribed to topic: ${canonicalTopic} with priority: ${subscribers[i].priority}, updating to ${priority}`);
+                    subscribers.splice(i, 1);
+                    continue;
+                }
+            }
+            if (subscribers[i].priority < priority) {
+                index = i;
+            }
             i++;
         }
-        subscribers.splice(i, 0, newSubscriber);
+        subscribers.splice(index, 0, { serviceId, priority });
 
         logger.info(`Service subscribed to topic:${canonicalTopic} with priority:${priority}`, { serviceId, topic: canonicalTopic, priority });
         return true;
