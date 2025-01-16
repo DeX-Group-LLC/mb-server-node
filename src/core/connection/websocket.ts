@@ -59,8 +59,8 @@ export function createWebSocketServer(connectionManager: ConnectionManager): Web
         logger.info('SSL is enabled');
         const key = fs.readFileSync(config.ssl.key);
         const cert = fs.readFileSync(config.ssl.cert);
-        const server = createServer({ key, cert });
-        wss = new WebSocketServer({ port: config.port, maxPayload: config.message.payload.maxLength + 512, server });
+        const server = createServer({ key, cert }).listen(config.port);
+        wss = new WebSocketServer({ maxPayload: config.message.payload.maxLength + 512, server });
     } else {
         wss = new WebSocketServer({ port: config.port, maxPayload: config.message.payload.maxLength + 512 });
     }
