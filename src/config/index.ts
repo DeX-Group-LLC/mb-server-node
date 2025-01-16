@@ -25,6 +25,9 @@ export function loadConfig(configPath: string = DEFAULT_CONFIG_PATH): Config {
     // Override with environment variables (if set).
     if (process.env.PORT) config.port = parseInt(process.env.PORT, 10);
     if (process.env.HOST) config.host = process.env.HOST;
+    config.ssl ??= {};
+    if (process.env.SSL_KEY) config.ssl.key = process.env.SSL_KEY;
+    if (process.env.SSL_CERT) config.ssl.cert = process.env.SSL_CERT;
     if (process.env.AUTH_FAILURE_LOCKOUT_THRESHOLD) config.auth.failure.lockout.threshold = parseInt(process.env.AUTH_FAILURE_LOCKOUT_THRESHOLD, 10);
     if (process.env.AUTH_FAILURE_LOCKOUT_DURATION) config.auth.failure.lockout.duration = parseInt(process.env.AUTH_FAILURE_LOCKOUT_DURATION, 10);
     if (process.env.RATE_LIMIT_GLOBAL_PER_SERVICE) config.rate.limit.global.per.service = parseInt(process.env.RATE_LIMIT_GLOBAL_PER_SERVICE, 10);

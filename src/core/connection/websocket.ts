@@ -1,4 +1,6 @@
+import fs from 'fs';
 import { IncomingMessage } from 'http';
+import { createServer } from 'https';
 import { WebSocketServer, WebSocket } from 'ws';
 import { config } from '@config';
 import { InternalError } from '@core/errors';
@@ -52,7 +54,16 @@ export class WebSocketConnection implements Connection {
  * @returns The configured WebSocket server.
  */
 export function createWebSocketServer(connectionManager: ConnectionManager): WebSocketServer {
-    const wss = new WebSocketServer({ port: config.port, maxPayload: config.message.payload.maxLength + 512 });
+    let wss: WebSocketServer;
+    if (config.ssl?.key && config.ssl?.cert) {
+        logger.info('SSL is enabled');
+        const key = fs.readFileSync(config.ssl.key);
+        const cert = fs.readFileSync(config.ssl.cert);
+        const server = createServer({ key, cert });
+        wss = new WebSocketServer({ port: config.port, maxPayload: config.message.payload.maxLength + 512, server });
+    } else {
+        wss = new WebSocketServer({ port: config.port, maxPayload: config.message.payload.maxLength + 512 });
+    }
 
     wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
         const ip = req.socket.remoteAddress || 'unknown';
