@@ -4,7 +4,7 @@ import { InternalError, MalformedMessageError, MessageError } from '@core/errors
 import { MonitoringManager } from '@core/monitoring';
 import { ServiceRegistry } from '@core/registry';
 import { MessageRouter } from '@core/router';
-import { MessageUtils, Header, Payload } from '@core/utils';
+import { BrokerHeader, ClientHeader, Exact, MessageUtils, Payload } from '@core/utils';
 import { ActionType } from '@core/types';
 import { SetupLogger } from '@utils/logger';
 import { ConnectionMetrics } from './metrics';
@@ -14,7 +14,7 @@ const logger = SetupLogger('ConnectionManager');
 /**
  * The header for an error message when the message header are malformed.
  */
-const ERROR_HEADER: Header = {
+const ERROR_HEADER: BrokerHeader = {
     action: ActionType.RESPONSE,
     topic: 'error',
     version: '1.0.0',
@@ -84,7 +84,7 @@ export class ConnectionManager {
      * @param header The message header.
      * @param payload The message payload.
      */
-    sendMessage(serviceId: string, header: Header, payload: Payload = {}): void {
+    sendMessage<T>(serviceId: string, header: Exact<T, BrokerHeader>, payload: Payload | Buffer = {}): void {
         const connection = this.connections.get(serviceId);
 
         if (!connection) {
@@ -99,7 +99,7 @@ export class ConnectionManager {
             throw new InternalError('Desired service connection is not open');
         }
 
-        connection.send(MessageUtils.serialize(header, payload));
+        connection.send(MessageUtils.serialize(header as BrokerHeader, payload));
         //logger.debug(`Sent message ${header.action}:${header.topic}:${header.version}:${header.requestid ? ':' +header.requestid : ''} to ${serviceId}`, { header, payload, serviceId });
     }
 
@@ -109,23 +109,20 @@ export class ConnectionManager {
      * @param connection The connection that received the message.
      * @param message The message to handle.
      */
-    private handleMessage(connection: Connection, message: Buffer): void {
-        let header: Header | null = null;
-        let payload: Payload | null = null;
+    private handleMessage(connection: Connection, buffer: Buffer): void {
+        let parser: MessageUtils.Parser | null = null;
 
         //logger.debug(`Received message from service ${connection.serviceId} (IP ${connection.ip})`);
 
         try {
-            // Create the parser and parse the message
-            const parser = new MessageUtils.Parser(message);
-            header = parser.parseHeader();
-            payload = parser.parsePayload(header.action);
+            // Parse the message
+            parser = new MessageUtils.Parser(buffer);
 
             // Route the message to the message router
-            this.messageRouter.routeMessage(connection.serviceId, { header, payload, size: message.length });
+            this.messageRouter.routeMessage(connection.serviceId, parser);
         } catch (error) {
             // Set the action to Response
-            header = header !== null ? { ...header, action: ActionType.RESPONSE } : ERROR_HEADER;
+            const header = parser?.header ? { ...parser.header, action: ActionType.RESPONSE } : ERROR_HEADER;
             // If the error is a MessageError, send an error message to the client
             if (error instanceof MessageError) {
                 logger.error(`[${error.code}] ${error.message}`, { serviceId: connection.serviceId, error });
@@ -136,11 +133,6 @@ export class ConnectionManager {
                     // If the header is null, the message is malformed
                     logger.error('Unexpected error while parsing message header:', { serviceId: connection.serviceId, error });
                     connection.send(MessageUtils.serialize(header, { error: new MalformedMessageError('Unexpected error while parsing message header').toJSON() }));
-                    return;
-                } else if (payload == null) {
-                    // If the payload is null, the message is malformed
-                    logger.error('Unexpected error while parsing message payload:', { serviceId: connection.serviceId, error });
-                    connection.send(MessageUtils.serialize(header, { error: new MalformedMessageError('Unexpected error while parsing message payload').toJSON() }));
                     return;
                 } else {
                     // If the error is not a MessageError and the header and payload are not null, then the error is during routing

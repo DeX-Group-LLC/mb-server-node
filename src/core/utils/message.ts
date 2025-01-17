@@ -1,9 +1,9 @@
 import * as semver from 'semver';
 import { config } from '@config';
-import { MalformedMessageError } from '@core/errors';
+import { MalformedMessageError, MessageError } from '@core/errors';
 import { ActionType } from '@core/types';
-import { Header, Payload } from '@core/utils/types';
-import * as topic from '@core/utils/topic';
+import { BrokerHeader, ClientHeader, Payload, PayloadError } from '@core/utils/types';
+import * as Topic from '@core/utils/topic';
 import { isUUID4 } from '@core/utils/uuid4';
 /**
  * Pretty-prints a file size in bytes to a human-readable format
@@ -23,31 +23,70 @@ export function prettySize(size: number): string {
 }
 
 const NEWLINE_CHAR = '\n'.charCodeAt(0);
+/**
+ * The maximum length of the header in bytes.
+ * This is the sum of the maximum lengths of the action, topic, version, requestId, parentRequestId, and timeout.
+ * The action is the longest action name, the topic is the maximum topic length, the version is the semver range, the requestId is the UUID length, the parentRequestId is the UUID length, and the timeout is the maximum timeout value.
+ */
+const MAX_HEADER_LENGTH = Object.values(ActionType).reduce((acc, action) => Math.max(acc, action.length), 0) + 1 + Topic.MAX_TOPIC_LENGTH + 1 + 20 + 1 + 36 + 1 + 36 + 1 + config.request.response.timeout.max.toString().length;
+
+const ERROR_KEY = Buffer.from('error:');
 
 /**
  * Parses a message string into a Message object.
  */
 export class Parser {
-    private newlineIndex: number;
+    private headerEndIndex: number;
+    private payloadStartIndex: number;
+    public header: ClientHeader;
+    private error: boolean;
 
     /**
      * Constructs a new Parser instance.
      * @param message The message string to parse.
      */
-    constructor(private message: Buffer) {
-        this.newlineIndex = message.indexOf(NEWLINE_CHAR);
-        if (this.newlineIndex === -1) {
-            throw new MalformedMessageError('Invalid message format: no newline separator found');
+    constructor(private buffer: Buffer) {
+        this.headerEndIndex = buffer.subarray(0, MAX_HEADER_LENGTH).indexOf(NEWLINE_CHAR);
+        if (this.headerEndIndex === -1) {
+            throw new MalformedMessageError(`Invalid message format: no newline separator found within the maximum header length of ${MAX_HEADER_LENGTH} bytes`);
         }
+        // Parse the header
+        this.header = this.parseHeader();
+        // Determine if error is present in the payload
+        const payloadStartIndex = this.headerEndIndex + 1;
+        this.error = ERROR_KEY.compare(this.buffer, payloadStartIndex, Math.min(payloadStartIndex + ERROR_KEY.length, this.buffer.length)) === 0;
+        this.payloadStartIndex = this.error ? payloadStartIndex + ERROR_KEY.length : payloadStartIndex;
+    }
+
+    get length(): number {
+        return this.buffer.length;
+    }
+
+    get hasError(): boolean {
+        return this.error;
+    }
+
+    get rawMessage(): Buffer {
+        return this.buffer;
+    }
+
+    get rawHeader(): Buffer {
+        return this.buffer.subarray(0, this.headerEndIndex);
+    }
+
+    get rawPayload(): Buffer {
+        return this.buffer.subarray(this.headerEndIndex + 1);
     }
 
     /**
      * Parses the message header from the message string.
+     * {action}:{topic}:{version}[:{requestId}[:{parentRequestId}[:{timeout}]]]
+     *
      * @returns The parsed message header.
      * @throws MalformedMessageError if the message format is invalid.
      */
-    public parseHeader(): Header {
-        const headerLine = this.message.toString('utf-8', 0, this.newlineIndex);
+    private parseHeader(): ClientHeader {
+        const headerLine = this.buffer.toString('utf-8', 0, this.headerEndIndex);
         const headerParts = headerLine.split(':');
 
         if (headerParts.length < 3) {
@@ -55,12 +94,14 @@ export class Parser {
         }
 
         // Create header object
-        const header: Header = {
+        const header: ClientHeader = {
             action: headerParts[0] as ActionType,
             topic: headerParts[1],
             version: headerParts[2],
-            requestid: headerParts.length === 4 ? headerParts[3] : undefined,
-        };
+        } as ClientHeader;
+        if (headerParts.length >= 4 && headerParts[3]) header.requestid = headerParts[3];
+        if (headerParts.length >= 5 && headerParts[4]) header.parentRequestId = headerParts[4];
+        if (headerParts.length >= 6 && headerParts[5]) header.timeout = parseInt(headerParts[5]);
 
         // Validate the action
         const validActions = Object.values(ActionType);
@@ -69,7 +110,7 @@ export class Parser {
         }
 
         // Validate the topic name
-        if (!topic.isValid(header.topic)) {
+        if (!Topic.isValid(header.topic)) {
             throw new MalformedMessageError(`Invalid topic name: ${header.topic}`, { topic: header.topic });
         }
 
@@ -79,8 +120,28 @@ export class Parser {
         }
 
         // Validate the request ID
-        if (header.requestid && !isUUID4(header.requestid)) {
-            throw new MalformedMessageError(`Invalid request ID format: ${header.requestid}`, { requestId: header.requestid });
+        if (header.requestid !== undefined) {
+            if (header.action !== ActionType.REQUEST) {
+                throw new MalformedMessageError(`Request ID is only allowed for request actions`, { action: header.action });
+            }
+            if (!isUUID4(header.requestid)) {
+                throw new MalformedMessageError(`Invalid request ID format: ${header.requestid}`, { requestId: header.requestid });
+            }
+        }
+
+        // Validate the parent request ID
+        if (header.parentRequestId && !isUUID4(header.parentRequestId)) {
+            throw new MalformedMessageError(`Invalid parent request ID format: ${header.parentRequestId}`, { parentRequestId: header.parentRequestId });
+        }
+
+        // Validate timeout if present in the header
+        if (header.timeout !== undefined) {
+            if (header.action !== ActionType.REQUEST) {
+                throw new MalformedMessageError('Timeout is only allowed for request actions', { action: header.action });
+            }
+            if (isNaN(header.timeout) || header.timeout <= 0 || header.timeout > config.request.response.timeout.max) {
+                throw new MalformedMessageError('Invalid timeout value', { timeout: header.timeout });
+            }
         }
 
         return header;
@@ -91,16 +152,17 @@ export class Parser {
      * @returns The parsed message payload.
      * @throws MalformedMessageError if the message format is invalid.
      */
-    public parsePayload(action: ActionType): Payload {
+    public parsePayload<T>(): T {
         // Check that the length of the payload is less than the maximum allowed
         const maxPayloadLength = config.message.payload.maxLength;
-        if (this.message.length - this.newlineIndex - 1 > maxPayloadLength) {
-            const prettyPayloadLength = prettySize(this.message.length - this.newlineIndex - 1);
-            throw new MalformedMessageError(`Payload exceeds maximum length of ${prettyPayloadLength}`, { payloadLength: this.message.length - this.newlineIndex - 1 });
+        if (this.buffer.length - this.payloadStartIndex > maxPayloadLength) {
+            const prettyPayloadLength = prettySize(this.buffer.length - this.payloadStartIndex);
+            throw new MalformedMessageError(`Payload exceeds maximum length of ${prettyPayloadLength}`, { payloadLength: this.buffer.length - this.payloadStartIndex });
         }
 
-        const payloadStr = this.message.toString('utf-8', this.newlineIndex + 1);
-        let payload: Payload = {};
+        // Parse the payload
+        const payloadStr = this.buffer.toString('utf-8', this.payloadStartIndex);
+        let payload;
         if (payloadStr) {
             try {
                 payload = JSON.parse(payloadStr);
@@ -109,24 +171,15 @@ export class Parser {
             }
         }
 
-        // Validate timeout if present in the payload
-        if (payload.timeout !== undefined) {
-            if (isNaN(payload.timeout) || payload.timeout <= 0 || payload.timeout > config.request.response.timeout.max) {
-                throw new MalformedMessageError('Invalid timeout value', { timeout: payload.timeout });
-            }
-            if (action !== ActionType.REQUEST) {
-                throw new MalformedMessageError('Timeout is only allowed for request actions', { action: action });
-            }
-        }
-
         // Validate error object if present in the payload
-        if (payload.error) {
-            if (!payload.error.code || !payload.error.message || !payload.error.timestamp) {
-                throw new MalformedMessageError('Invalid error object in payload', { error: payload.error });
+        if (this.hasError) {
+            if (!payload.code || !payload.message || !payload.timestamp) {
+                throw new MalformedMessageError('Invalid error object in payload', { error: payload });
             }
+            throw new MessageError(payload.code, payload.message, payload.details);
         }
 
-        return payload;
+        return payload as T;
     }
 }
 
@@ -136,17 +189,26 @@ export class Parser {
  * @param payload The message payload.
  * @returns The serialized message string.
  */
-export function serialize(header: Header, payload: Payload): string {
+export function serialize<T extends BrokerHeader | ClientHeader>(header: T, payload: Payload | Buffer): string {
     // Create the header line
     let headerLine = `${header.action}:${header.topic}:${header.version}`;
-    if (header.requestid) {
-        // Add the request ID if it exists
-        headerLine += `:${header.requestid}`;
-    }
+
+    if ((header as ClientHeader).timeout) headerLine += `:${(header as ClientHeader).requestid ?? ''}:${(header as ClientHeader).parentRequestId ?? ''}:${(header as ClientHeader).timeout}`;
+    else if ((header as ClientHeader).parentRequestId) headerLine += `:${(header as ClientHeader).requestid ?? ''}:${(header as ClientHeader).parentRequestId}`;
+    else if (header.requestid) headerLine += `:${header.requestid}`;
 
     // Create the payload line
-    const payloadLine = JSON.stringify(payload);
+    let payloadLine: string;
+    if (payload instanceof Buffer) {
+        payloadLine = payload.toString('utf-8');
+    } else {
+        payloadLine = JSON.stringify(payload);
+    }
 
     // Return the serialized message string
     return `${headerLine}\n${payloadLine}`;
+}
+
+export function toBrokerHeader(header: ClientHeader): BrokerHeader {
+    return { action: ActionType.RESPONSE, topic: header.topic, version: header.version, requestid: header.requestid } as BrokerHeader;
 }

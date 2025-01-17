@@ -2,13 +2,13 @@ import { randomUUID } from 'crypto';
 import { config } from '@config';
 import { ConnectionManager } from '@core/connection';
 import { InvalidRequestIdError, MalformedMessageError, NoRouteFoundError, ServiceUnavailableError, TimeoutError } from '@core/errors';
+import { MonitoringManager } from '@core/monitoring/manager';
 import { ServiceRegistry } from '@core/registry';
 import { SubscriptionManager } from '@core/subscription';
 import { ActionType } from '@core/types';
-import { Message, Header } from '@core/utils';
+import { Message, ClientHeader, MessageUtils, BrokerHeader } from '@core/utils';
 import { SetupLogger } from '@utils/logger';
 import { RouterMetrics } from './metrics';
-import { MonitoringManager } from '@core/monitoring/manager';
 
 const logger = SetupLogger('MessageRouter');
 
@@ -17,7 +17,7 @@ export interface Request {
     targetServiceId: string;
     originalRequestId?: string;
     targetRequestId: string;
-    originalHeader: Header;
+    originalHeader: ClientHeader;
     timeout?: NodeJS.Timeout;
     createdAt: Date;
 }
@@ -57,10 +57,10 @@ export class MessageRouter {
      * Routes a message to the appropriate subscribers or service.
      *
      * @param serviceId The ID of the service that sent the message.
-     * @param message The message to route.
+     * @param parser The message to route.
      */
-    routeMessage(serviceId: string, message: Message): void {
-        const { action, topic } = message.header;
+    routeMessage(serviceId: string, parser: MessageUtils.Parser): void {
+        const { action, topic } = parser.header;
 
         // Reset the heartbeat for the service
         this.serviceRegistry.resetHeartbeat(serviceId);
@@ -68,8 +68,8 @@ export class MessageRouter {
         // Track messages and size
         this.metrics.messageCount.slot.add(1);
         this.metrics.messageRate.slot.add(1);
-        this.metrics.messageSizeAvg.slot.add(message.size);
-        this.metrics.messageSizeMax.slot.add(message.size);
+        this.metrics.messageSizeAvg.slot.add(parser.length);
+        this.metrics.messageSizeMax.slot.add(parser.length);
 
         try {
             switch (action) {
@@ -77,7 +77,7 @@ export class MessageRouter {
                     this.metrics.publishCount.slot.add(1);
                     this.metrics.publishRate.slot.add(1);
                     try {
-                        this.handlePublish(serviceId, message);
+                        this.handlePublish(serviceId, parser);
                     } catch (error) {
                         this.metrics.publishCountError.slot.add(1);
                         this.metrics.publishRateError.slot.add(1);
@@ -88,7 +88,7 @@ export class MessageRouter {
                     this.metrics.requestCount.slot.add(1);
                     this.metrics.requestRate.slot.add(1);
                     try {
-                        this.handleRequest(serviceId, message);
+                        this.handleRequest(serviceId, parser);
                     } catch (error) {
                         this.metrics.requestCountError.slot.add(1);
                         this.metrics.requestRateError.slot.add(1);
@@ -99,7 +99,7 @@ export class MessageRouter {
                     this.metrics.responseCount.slot.add(1);
                     this.metrics.responseRate.slot.add(1);
                     try {
-                        this.handleResponse(serviceId, message);
+                        this.handleResponse(serviceId, parser);
                     } catch (error) {
                         this.metrics.responseCountError.slot.add(1);
                         this.metrics.responseRateError.slot.add(1);
@@ -112,7 +112,7 @@ export class MessageRouter {
                     logger.error(`Unknown action type: ${exhaustiveCheck}`);
                     this.metrics.messageCountError.slot.add(1);
                     this.metrics.messageRateError.slot.add(1);
-                    const header = { ...message.header, action: ActionType.RESPONSE };
+                    const header = MessageUtils.toBrokerHeader({ ...parser.header, action: ActionType.RESPONSE });
                     const payload = { error: new MalformedMessageError(`Unknown action type: ${action}`).toJSON() };
                     this.connectionManager.sendMessage(serviceId, header, payload);
             }
@@ -127,16 +127,16 @@ export class MessageRouter {
      * Handles a publish message.
      *
      * @param serviceId The ID of the service that sent the message.
-     * @param message The message to publish.
+     * @param parser The message to publish.
      * @returns True if the message was successfully published, false otherwise.
      */
-    private handlePublish(serviceId: string, message: Message): boolean {
-        const { topic } = message.header;
-        const responseHeader: Header = { ...message.header, action: ActionType.RESPONSE };
+    private handlePublish(serviceId: string, parser: MessageUtils.Parser): boolean {
+        const { topic } = parser.header;
+        const responseHeader = MessageUtils.toBrokerHeader(parser.header);
 
         // Handle system messages
         if (topic.startsWith('system.')) {
-            this.serviceRegistry.handleSystemMessage(serviceId, message);
+            this.serviceRegistry.handleSystemMessage(serviceId, parser);
             return true;
         }
 
@@ -153,18 +153,18 @@ export class MessageRouter {
         }
 
         // Remove the requestId from the header before forwarding
-        const forwardedHeader = { ...message.header, requestid: undefined };
+        const forwardedHeader = MessageUtils.toBrokerHeader({ ...parser.header, requestid: undefined });
         // Forward the message to all subscribers
         logger.info(`Publishing message to topic: ${topic} for service: ${serviceId}`);
         for (const subscriber of subscribers) {
-            this.connectionManager.sendMessage(subscriber, forwardedHeader, message.payload);
+            this.connectionManager.sendMessage(subscriber, forwardedHeader, parser.rawPayload);
         }
 
         // If the message had a requestId, send a response to the original sender
-        if (message.header.requestid) {
+        if (parser.header.requestid) {
             const payload = { status: 'success' };
             this.connectionManager.sendMessage(serviceId, responseHeader, payload);
-            logger.info(`Sent publish response to service: ${serviceId} for request: ${message.header.requestid}`);
+            logger.info(`Sent publish response to service: ${serviceId} for request: ${parser.header.requestid}`);
         }
 
         return true;
@@ -174,15 +174,15 @@ export class MessageRouter {
      * Handles a request message.
      *
      * @param serviceId The ID of the service making the request.
-     * @param message The request message.
+     * @param parser The request message.
      * @returns True if the request was successfully handled, false otherwise.
      */
-    private handleRequest(serviceId: string, message: Message): boolean {
-        const { topic } = message.header;
+    private handleRequest(serviceId: string, parser: MessageUtils.Parser): boolean {
+        const { topic } = parser.header;
 
         // Handle system messages
         if (topic.startsWith('system.')) {
-            this.serviceRegistry.handleSystemMessage(serviceId, message);
+            this.serviceRegistry.handleSystemMessage(serviceId, parser);
             return true;
         }
 
@@ -195,7 +195,7 @@ export class MessageRouter {
         // Check if the number of outstanding requests has reached the limit
         if (this.requests.size >= config.max.outstanding.requests) {
             logger.warn(`Maximum number of outstanding requests reached (${config.max.outstanding.requests})`);
-            const responseHeader = { ...message.header, action: ActionType.RESPONSE };
+            const responseHeader = MessageUtils.toBrokerHeader({ ...parser.header, action: ActionType.RESPONSE });
             const responsePayload = { error: new ServiceUnavailableError('Maximum number of outstanding requests reached').toJSON() };
             this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
             this.metrics.requestCountDropped.slot.add(1);
@@ -208,15 +208,12 @@ export class MessageRouter {
         const targetServiceId = subscribers.length > 1 ? subscribers[Math.floor(Math.random() * subscribers.length)] : subscribers[0];
 
         // Create the request object
-        const request = this.generateRequest(serviceId, targetServiceId, message.header, message.payload.timeout);
-
-        // Remove timeout from the message payload if it exists, so it doesn't get sent to the target service
-        if (message.payload.timeout) delete message.payload.timeout;
+        const request = this.generateRequest(serviceId, targetServiceId, parser.header);
 
         // Add the targetRequestId to the message header before forwarding
-        const forwardedHeader: Header = { ...message.header, requestid: request.targetRequestId };
+        const forwardedHeader = MessageUtils.toBrokerHeader({ ...parser.header, requestid: request.targetRequestId });
         logger.info(`Forwarding request for topic: ${topic} from service: ${serviceId} to: ${targetServiceId} with new request ID: ${request.targetRequestId}`);
-        this.connectionManager.sendMessage(targetServiceId, forwardedHeader, message.payload);
+        this.connectionManager.sendMessage(targetServiceId, forwardedHeader, parser.rawPayload);
 
         return true;
     }
@@ -225,16 +222,16 @@ export class MessageRouter {
      * Handles a response message.
      *
      * @param serviceId The ID of the service that sent the response.
-     * @param message The response message.
+     * @param parser The response message.
      * @returns True if the response was successfully handled, false otherwise.
      */
-    private handleResponse(serviceId: string, message: Message): boolean {
-        const targetRequestId = message.header.requestid;
-        const { topic } = message.header;
+    private handleResponse(serviceId: string, parser: MessageUtils.Parser): boolean {
+        const targetRequestId = parser.header.requestid;
+        const { topic } = parser.header;
 
         // Handle system messages
         if (topic.startsWith('system.')) {
-            this.serviceRegistry.handleSystemMessage(serviceId, message);
+            this.serviceRegistry.handleSystemMessage(serviceId, parser);
             return true;
         }
 
@@ -252,11 +249,11 @@ export class MessageRouter {
         this.removeRequest(request.targetServiceId, request.targetRequestId);
 
         // Send the response to the original requester
-        if (request.originalRequestId || message.payload.error) {
-            const responseHeader = { ...request.originalHeader, action: ActionType.RESPONSE };
-            this.connectionManager.sendMessage(request.originServiceId, responseHeader, message.payload);
-            if (message.payload.error) {
-                logger.warn(`Error received from service: ${request.targetServiceId} for request: ${request.targetRequestId}`, { serviceId: request.targetServiceId, error: message.payload.error });
+        if (request.originalRequestId || parser.hasError) {
+            const responseHeader = MessageUtils.toBrokerHeader({ ...request.originalHeader, action: ActionType.RESPONSE });
+            this.connectionManager.sendMessage(request.originServiceId, responseHeader, parser.rawPayload);
+            if (parser.hasError) {
+                logger.warn(`Error received from service: ${request.targetServiceId} for request: ${request.targetRequestId}`, { serviceId: request.targetServiceId });
                 this.metrics.responseCountError.slot.add(1);
                 this.metrics.responseRateError.slot.add(1);
             }
@@ -279,7 +276,7 @@ export class MessageRouter {
      * @param originalServiceId The ID of the service that made the request.
      * @param originalRequestId The ID of the original request.
      */
-    private generateRequest(originServiceId: string, targetServiceId: string, originalHeader: Header, timeout?: number): Request {
+    private generateRequest(originServiceId: string, targetServiceId: string, originalHeader: ClientHeader): Request {
         const targetRequestId = this.generateRequestId();
         // Create the request object
         const request: Request = {
@@ -298,9 +295,9 @@ export class MessageRouter {
 
                 // Send a timeout error back to the original requester
                 const responsePayload = { error: new TimeoutError('Request timed out').toJSON() };
-                const responseHeader = { ...originalHeader, action: ActionType.RESPONSE };
+                const responseHeader = MessageUtils.toBrokerHeader({ ...originalHeader, action: ActionType.RESPONSE });
                 this.connectionManager.sendMessage(originServiceId, responseHeader, responsePayload);
-            }, timeout ?? config.request.response.timeout.default) : undefined,
+            }, originalHeader.timeout ?? config.request.response.timeout.default) : undefined,
             createdAt: new Date(),
         };
 
@@ -317,7 +314,7 @@ export class MessageRouter {
             // Remove the oldest request and send an error response
             if (oldestRequest) {
                 this.removeRequest(oldestRequest.targetServiceId, oldestRequest.targetRequestId);
-                const responseHeader = { ...oldestRequest.originalHeader, action: ActionType.RESPONSE, requestid: oldestRequest.originalRequestId };
+                const responseHeader = MessageUtils.toBrokerHeader({ ...oldestRequest.originalHeader, action: ActionType.RESPONSE, requestid: oldestRequest.originalRequestId });
                 const responsePayload = { error: new ServiceUnavailableError('Message broker is busy').toJSON() };
                 this.connectionManager.sendMessage(oldestRequest.originServiceId, responseHeader, responsePayload);
                 logger.warn(`Removed oldest request ${oldestRequest.originalRequestId} from ${oldestRequest.originServiceId} due to exceeding max outstanding requests`);

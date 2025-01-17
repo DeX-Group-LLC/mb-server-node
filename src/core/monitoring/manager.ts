@@ -126,7 +126,7 @@ export class MonitoringManager {
      * Serializes all metrics to a JSON object.
      * @returns A JSON object containing all metrics.
      */
-    serializeMetrics(showAll: boolean, paramFilter: Record<string, string>): Record<string, number> | Record<string, MetricInfo> {
+    serializeMetrics(showAll: boolean, paramFilter?: Record<string, string>): Record<string, number> | Record<string, MetricInfo> {
         if (showAll) {
             const metrics: Record<string, MetricInfo> = {};
             // Skip regular metrics if we have a param filter
