@@ -290,7 +290,7 @@ export class ServiceRegistry {
 
         // If the message is a request, send a response, ignore for responses
         if (message.header.action === ActionType.REQUEST) {
-            const responseHeader = MessageUtils.toBrokerHeader({ ...message.header, action: ActionType.RESPONSE });
+            const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestid);
             const responsePayload = { status: 'success' };
             this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
         }
@@ -346,7 +346,7 @@ export class ServiceRegistry {
         }
 
         // Send a success response
-        const responseHeader = MessageUtils.toBrokerHeader({ ...message.header, action: ActionType.RESPONSE });
+        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestid);
         const responsePayload = { status: 'success' };
         this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
     }
@@ -371,7 +371,7 @@ export class ServiceRegistry {
         this.subscriptionManager.unsubscribe(serviceId, `system.log`);
 
         // Send a success response
-        const responseHeader = MessageUtils.toBrokerHeader({ ...message.header, action: ActionType.RESPONSE });
+        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestid);
         const responsePayload = { status: 'success' };
         this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
     }
@@ -394,7 +394,7 @@ export class ServiceRegistry {
         const { showAll, paramFilter } = message.parsePayload<{ showAll: boolean, paramFilter?: Record<string, string> }>();
         const metrics = this.monitoringManager.serializeMetrics(showAll, paramFilter);
 
-        const responseHeader = MessageUtils.toBrokerHeader({ ...message.header, action: ActionType.RESPONSE });
+        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestid);
         const responsePayload = { metrics };
         this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
     }
@@ -414,7 +414,7 @@ export class ServiceRegistry {
             lastHeartbeat: service.lastHeartbeat.toISOString(),
         }));
 
-        const responseHeader = MessageUtils.toBrokerHeader({ ...message.header, action: ActionType.RESPONSE });
+        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestid);
         const responsePayload = { services };
         this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
 
@@ -450,7 +450,7 @@ export class ServiceRegistry {
         // Get the latest subscriptions for the service given:
         const subscriptions = this.subscriptionManager.getSubscribedInfo(targetServiceId);
 
-        const responseHeader = MessageUtils.toBrokerHeader({ ...message.header, action: ActionType.RESPONSE });
+        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestid);
         const responsePayload = { subscriptions };
         this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
     }
@@ -473,7 +473,7 @@ export class ServiceRegistry {
         this.registerService(serviceId, name, description);
 
         // Send a success response
-        const responseHeader = MessageUtils.toBrokerHeader({ ...message.header, action: ActionType.RESPONSE });
+        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestid);
         const responsePayload = { status: 'success' };
         this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
     }
@@ -486,7 +486,7 @@ export class ServiceRegistry {
      */
     private handleTopicList(serviceId: string, message: MessageUtils.Parser): void {
         const topics = this.subscriptionManager.getAllSubscribedTopics();
-        const responseHeader = MessageUtils.toBrokerHeader({ ...message.header, action: ActionType.RESPONSE });
+        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestid);
         const responsePayload = { topics };
         this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
     }
@@ -499,7 +499,7 @@ export class ServiceRegistry {
      */
     private handleTopicSubscribers(serviceId: string, message: MessageUtils.Parser): void {
         const subscribers = this.subscriptionManager.getAllSubscribedTopicWithSubscribers();
-        const responseHeader = MessageUtils.toBrokerHeader({ ...message.header, action: ActionType.RESPONSE });
+        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestid);
         const responsePayload = { subscribers };
         this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
     }
@@ -529,7 +529,7 @@ export class ServiceRegistry {
         }
 
         const success = this.subscriptionManager.subscribe(serviceId, topic, priority);
-        const responseHeader = MessageUtils.toBrokerHeader({ ...message.header, action: ActionType.RESPONSE });
+        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestid);
         const responsePayload = { status: success ? 'success' : 'failure' };
         this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
     }
@@ -553,7 +553,7 @@ export class ServiceRegistry {
         }
 
         const success = this.subscriptionManager.unsubscribe(serviceId, topic);
-        const responseHeader = MessageUtils.toBrokerHeader({ ...message.header, action: ActionType.RESPONSE });
+        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestid);
         const responsePayload = { status: success ? 'success' : 'failure' };
         this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
     }

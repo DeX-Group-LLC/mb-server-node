@@ -1,8 +1,9 @@
+import { randomUUID } from 'crypto';
 import * as semver from 'semver';
 import { config } from '@config';
 import { MalformedMessageError, MessageError } from '@core/errors';
 import { ActionType } from '@core/types';
-import { BrokerHeader, ClientHeader, Payload, PayloadError } from '@core/utils/types';
+import { BrokerHeader, ClientHeader, Payload } from '@core/utils/types';
 import * as Topic from '@core/utils/topic';
 import { isUUID4 } from '@core/utils/uuid4';
 /**
@@ -209,6 +210,9 @@ export function serialize<T extends BrokerHeader | ClientHeader>(header: T, payl
     return `${headerLine}\n${payloadLine}`;
 }
 
-export function toBrokerHeader(header: ClientHeader): BrokerHeader {
-    return { action: ActionType.RESPONSE, topic: header.topic, version: header.version, requestid: header.requestid } as BrokerHeader;
+export function toBrokerHeader(header: ClientHeader, action: ActionType = header.action, requestId?: string): BrokerHeader {
+    // If no requestId is provided, generate a new one
+    if (!requestId) requestId = randomUUID();
+    // Create the broker header
+    return { action, topic: header.topic, version: header.version, requestid: requestId, parentRequestId: header.requestid } as BrokerHeader;
 }

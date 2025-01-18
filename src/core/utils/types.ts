@@ -16,24 +16,12 @@ export type BrokerHeader = {
 
     /** Optional unique identifier for request-response message pairs */
     requestid?: string;
-};
-
-export type ClientHeader = {
-    /** The type of action this message represents (e.g., REQUEST, RESPONSE, PUBLISH) */
-    action: ActionType;
-
-    /** The topic this message belongs to, using dot notation (e.g., 'service.event') */
-    topic: string;
-
-    /** The version of the message format (e.g., '1.0.0') */
-    version: string;
-
-    /** Optional unique identifier for request-response message pairs */
-    requestid?: string;
 
     /** Optional unique identifier for parent request-response message pairs */
     parentRequestId?: string;
+};
 
+export type ClientHeader = BrokerHeader & {
     /** Optional timeout for request-response message pairs */
     timeout?: number;
 };

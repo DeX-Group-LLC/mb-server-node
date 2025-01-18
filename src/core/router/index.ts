@@ -112,7 +112,7 @@ export class MessageRouter {
                     logger.error(`Unknown action type: ${exhaustiveCheck}`);
                     this.metrics.messageCountError.slot.add(1);
                     this.metrics.messageRateError.slot.add(1);
-                    const header = MessageUtils.toBrokerHeader({ ...parser.header, action: ActionType.RESPONSE });
+                    const header = MessageUtils.toBrokerHeader(parser.header, ActionType.RESPONSE);
                     const payload = { error: new MalformedMessageError(`Unknown action type: ${action}`).toJSON() };
                     this.connectionManager.sendMessage(serviceId, header, payload);
             }
@@ -132,7 +132,6 @@ export class MessageRouter {
      */
     private handlePublish(serviceId: string, parser: MessageUtils.Parser): boolean {
         const { topic } = parser.header;
-        const responseHeader = MessageUtils.toBrokerHeader(parser.header);
 
         // Handle system messages
         if (topic.startsWith('system.')) {
@@ -145,6 +144,7 @@ export class MessageRouter {
         if (subscribers.length === 0) {
             logger.debug(`No subscribers for topic: ${topic}`);
             // Send an error response to the requester
+            const responseHeader = MessageUtils.toBrokerHeader(parser.header, ActionType.RESPONSE);
             const responsePayload = { error: new NoRouteFoundError(`No subscribers for topic ${topic}`).toJSON() };
             this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
             this.metrics.publishCountDropped.slot.add(1);
@@ -153,7 +153,7 @@ export class MessageRouter {
         }
 
         // Remove the requestId from the header before forwarding
-        const forwardedHeader = MessageUtils.toBrokerHeader({ ...parser.header, requestid: undefined });
+        const forwardedHeader = MessageUtils.toBrokerHeader(parser.header);
         // Forward the message to all subscribers
         logger.info(`Publishing message to topic: ${topic} for service: ${serviceId}`);
         for (const subscriber of subscribers) {
@@ -162,6 +162,7 @@ export class MessageRouter {
 
         // If the message had a requestId, send a response to the original sender
         if (parser.header.requestid) {
+            const responseHeader = MessageUtils.toBrokerHeader(parser.header, ActionType.RESPONSE);
             const payload = { status: 'success' };
             this.connectionManager.sendMessage(serviceId, responseHeader, payload);
             logger.info(`Sent publish response to service: ${serviceId} for request: ${parser.header.requestid}`);
@@ -195,7 +196,7 @@ export class MessageRouter {
         // Check if the number of outstanding requests has reached the limit
         if (this.requests.size >= config.max.outstanding.requests) {
             logger.warn(`Maximum number of outstanding requests reached (${config.max.outstanding.requests})`);
-            const responseHeader = MessageUtils.toBrokerHeader({ ...parser.header, action: ActionType.RESPONSE });
+            const responseHeader = MessageUtils.toBrokerHeader(parser.header, ActionType.RESPONSE);
             const responsePayload = { error: new ServiceUnavailableError('Maximum number of outstanding requests reached').toJSON() };
             this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
             this.metrics.requestCountDropped.slot.add(1);
@@ -211,7 +212,7 @@ export class MessageRouter {
         const request = this.generateRequest(serviceId, targetServiceId, parser.header);
 
         // Add the targetRequestId to the message header before forwarding
-        const forwardedHeader = MessageUtils.toBrokerHeader({ ...parser.header, requestid: request.targetRequestId });
+        const forwardedHeader = MessageUtils.toBrokerHeader(parser.header, undefined, request.targetRequestId);
         logger.info(`Forwarding request for topic: ${topic} from service: ${serviceId} to: ${targetServiceId} with new request ID: ${request.targetRequestId}`);
         this.connectionManager.sendMessage(targetServiceId, forwardedHeader, parser.rawPayload);
 
@@ -250,7 +251,7 @@ export class MessageRouter {
 
         // Send the response to the original requester
         if (request.originalRequestId || parser.hasError) {
-            const responseHeader = MessageUtils.toBrokerHeader({ ...request.originalHeader, action: ActionType.RESPONSE });
+            const responseHeader = MessageUtils.toBrokerHeader(request.originalHeader, ActionType.RESPONSE, request.originalRequestId);
             this.connectionManager.sendMessage(request.originServiceId, responseHeader, parser.rawPayload);
             if (parser.hasError) {
                 logger.warn(`Error received from service: ${request.targetServiceId} for request: ${request.targetRequestId}`, { serviceId: request.targetServiceId });
@@ -295,7 +296,7 @@ export class MessageRouter {
 
                 // Send a timeout error back to the original requester
                 const responsePayload = { error: new TimeoutError('Request timed out').toJSON() };
-                const responseHeader = MessageUtils.toBrokerHeader({ ...originalHeader, action: ActionType.RESPONSE });
+                const responseHeader = MessageUtils.toBrokerHeader(originalHeader, ActionType.RESPONSE);
                 this.connectionManager.sendMessage(originServiceId, responseHeader, responsePayload);
             }, originalHeader.timeout ?? config.request.response.timeout.default) : undefined,
             createdAt: new Date(),
@@ -314,7 +315,7 @@ export class MessageRouter {
             // Remove the oldest request and send an error response
             if (oldestRequest) {
                 this.removeRequest(oldestRequest.targetServiceId, oldestRequest.targetRequestId);
-                const responseHeader = MessageUtils.toBrokerHeader({ ...oldestRequest.originalHeader, action: ActionType.RESPONSE, requestid: oldestRequest.originalRequestId });
+                const responseHeader = MessageUtils.toBrokerHeader(oldestRequest.originalHeader, ActionType.RESPONSE, oldestRequest.originServiceId);
                 const responsePayload = { error: new ServiceUnavailableError('Message broker is busy').toJSON() };
                 this.connectionManager.sendMessage(oldestRequest.originServiceId, responseHeader, responsePayload);
                 logger.warn(`Removed oldest request ${oldestRequest.originalRequestId} from ${oldestRequest.originServiceId} due to exceeding max outstanding requests`);

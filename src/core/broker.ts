@@ -30,7 +30,7 @@ export class MessageBroker {
         this.subscriptionManager = new SubscriptionManager();
         this.messageRouter = new MessageRouter(this.subscriptionManager, this.monitorManager);
         this.serviceRegistry = new ServiceRegistry(this.subscriptionManager, this.monitorManager);
-        this.connectionManager = new ConnectionManager(this.messageRouter, this.serviceRegistry, this.monitorManager);
+        this.connectionManager = new ConnectionManager(this.messageRouter, this.serviceRegistry, this.monitorManager, this.subscriptionManager);
         this.serviceRegistry.assignConnectionManager(this.connectionManager);
         this.messageRouter.assignConnectionManager(this.connectionManager);
         this.messageRouter.assignServiceRegistry(this.serviceRegistry);

@@ -4,8 +4,9 @@ import { InternalError, MalformedMessageError, MessageError } from '@core/errors
 import { MonitoringManager } from '@core/monitoring';
 import { ServiceRegistry } from '@core/registry';
 import { MessageRouter } from '@core/router';
-import { BrokerHeader, ClientHeader, Exact, MessageUtils, Payload } from '@core/utils';
+import { SubscriptionManager } from '@core/subscription';
 import { ActionType } from '@core/types';
+import { BrokerHeader, ClientHeader, Exact, MessageUtils, Payload } from '@core/utils';
 import { SetupLogger } from '@utils/logger';
 import { ConnectionMetrics } from './metrics';
 
@@ -27,7 +28,7 @@ export class ConnectionManager {
     private connections: Map<string, Connection>;
     private metrics: ConnectionMetrics;
 
-    constructor(private messageRouter: MessageRouter, private serviceRegistry: ServiceRegistry, private monitorManager: MonitoringManager) {
+    constructor(private messageRouter: MessageRouter, private serviceRegistry: ServiceRegistry, monitorManager: MonitoringManager, private subscriptionManager: SubscriptionManager) {
         this.connections = new Map<string, Connection>();
         this.metrics = new ConnectionMetrics(monitorManager);
     }
@@ -78,13 +79,12 @@ export class ConnectionManager {
     }
 
     /**
-     * Sends a message to a specific service over its connection.
+     * Resolves a connection for a given service ID.
      *
-     * @param serviceId The ID of the service to send the message to.
-     * @param header The message header.
-     * @param payload The message payload.
+     * @param serviceId The ID of the service.
+     * @returns The connection object if found, undefined otherwise.
      */
-    sendMessage<T>(serviceId: string, header: Exact<T, BrokerHeader>, payload: Payload | Buffer = {}): void {
+    private _resolveConnection(serviceId: string): Connection | undefined {
         const connection = this.connections.get(serviceId);
 
         if (!connection) {
@@ -99,8 +99,37 @@ export class ConnectionManager {
             throw new InternalError('Desired service connection is not open');
         }
 
+        return connection;
+    }
+
+    /**
+     * Sends a message to a specific service over its connection.
+     *
+     * @param serviceId The ID of the service to send the message to.
+     * @param header The message header.
+     * @param payload The message payload.
+     */
+    sendMessage<T>(serviceId: string, header: Exact<T, BrokerHeader>, payload: Payload | Buffer = {}): void {
+        const connection = this._resolveConnection(serviceId);
+        if (!connection) return;
+
+        // Send the message to the service
         connection.send(MessageUtils.serialize(header as BrokerHeader, payload));
         //logger.debug(`Sent message ${header.action}:${header.topic}:${header.version}:${header.requestid ? ':' +header.requestid : ''} to ${serviceId}`, { header, payload, serviceId });
+
+        // Notify all subscribers of `system.message`:
+        const subscribers = this.subscriptionManager.getSubscribers('system.message');
+        if (subscribers.length) {
+            const subHeader = { action: ActionType.PUBLISH, topic: 'system.message', version: '1.0.0' } as BrokerHeader;
+            const msg = MessageUtils.serialize(subHeader, { from: 'message-broker', to: serviceId, header });
+            // Forward the message to all subscribers
+            logger.info(`Publishing message to topic: ${subHeader.topic}`);
+            for (const subscriber of subscribers) {
+                const connection = this._resolveConnection(subscriber);
+                if (!connection) continue;
+                connection.send(msg);
+            }
+        }
     }
 
     /**
@@ -117,6 +146,20 @@ export class ConnectionManager {
         try {
             // Parse the message
             parser = new MessageUtils.Parser(buffer);
+
+            // Notify all subscribers of `system.message`:
+            const subscribers = this.subscriptionManager.getSubscribers('system.message');
+            if (subscribers.length) {
+                const subHeader = { action: ActionType.PUBLISH, topic: 'system.message', version: '1.0.0' } as BrokerHeader;
+                const msg = MessageUtils.serialize(subHeader, { from: connection.serviceId, to: 'message-broker', header: parser.header });
+                // Forward the message to all subscribers
+                logger.info(`Publishing message to topic: ${parser.header.topic}`);
+                for (const subscriber of subscribers) {
+                    const connection = this._resolveConnection(subscriber);
+                    if (!connection) continue;
+                    connection.send(msg);
+                }
+            }
 
             // Route the message to the message router
             this.messageRouter.routeMessage(connection.serviceId, parser);

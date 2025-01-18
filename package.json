@@ -25,6 +25,7 @@
     "test": "jest --coverage --maxWorkers=4",
     "bench:heartbeat": "ts-node -r tsconfig-paths/register examples/bench-heartbeat.ts",
     "bench:metrics": "ts-node -r tsconfig-paths/register examples/bench-metrics.ts",
+    "bench:uuid4": "ts-node -r tsconfig-paths/register examples/bench-uuid4.ts",
     "coveralls": "jest --coverage && coveralls < coverage/lcov.info"
   },
   "devDependencies": {
