@@ -100,7 +100,7 @@ export class Parser {
             topic: headerParts[1],
             version: headerParts[2],
         } as ClientHeader;
-        if (headerParts.length >= 4 && headerParts[3]) header.requestid = headerParts[3];
+        if (headerParts.length >= 4 && headerParts[3]) header.requestId = headerParts[3];
         if (headerParts.length >= 5 && headerParts[4]) header.parentRequestId = headerParts[4];
         if (headerParts.length >= 6 && headerParts[5]) header.timeout = parseInt(headerParts[5]);
 
@@ -121,12 +121,12 @@ export class Parser {
         }
 
         // Validate the request ID
-        if (header.requestid !== undefined) {
+        if (header.requestId !== undefined) {
             if (header.action !== ActionType.REQUEST) {
                 throw new MalformedMessageError(`Request ID is only allowed for request actions`, { action: header.action });
             }
-            if (!isUUID4(header.requestid)) {
-                throw new MalformedMessageError(`Invalid request ID format: ${header.requestid}`, { requestId: header.requestid });
+            if (!isUUID4(header.requestId)) {
+                throw new MalformedMessageError(`Invalid request ID format: ${header.requestId}`, { requestId: header.requestId });
             }
         }
 
@@ -184,35 +184,33 @@ export class Parser {
     }
 }
 
+export function serializePayload(payload: Payload | Buffer, replacer?: (key: string, value: any) => any): string {
+    if (Buffer.isBuffer(payload)) return payload.toString('utf-8');
+    return JSON.stringify(payload, replacer);
+}
+
 /**
  * Serializes a message object into a string.
  * @param header The message header.
  * @param payload The message payload.
  * @returns The serialized message string.
  */
-export function serialize<T extends BrokerHeader | ClientHeader>(header: T, payload: Payload | Buffer): string {
+export function serialize<T extends BrokerHeader | ClientHeader>(header: T, payload: Payload | Buffer, replacer?: (key: string, value: any) => any): string {
     // Create the header line
     let headerLine = `${header.action}:${header.topic}:${header.version}`;
 
-    if ((header as ClientHeader).timeout) headerLine += `:${(header as ClientHeader).requestid ?? ''}:${(header as ClientHeader).parentRequestId ?? ''}:${(header as ClientHeader).timeout}`;
-    else if ((header as ClientHeader).parentRequestId) headerLine += `:${(header as ClientHeader).requestid ?? ''}:${(header as ClientHeader).parentRequestId}`;
-    else if (header.requestid) headerLine += `:${header.requestid}`;
-
-    // Create the payload line
-    let payloadLine: string;
-    if (payload instanceof Buffer) {
-        payloadLine = payload.toString('utf-8');
-    } else {
-        payloadLine = JSON.stringify(payload);
-    }
+    // Add the requestId, parentRequestId, and timeout to the header line if present
+    if ((header as ClientHeader).timeout) headerLine += `:${(header as ClientHeader).requestId ?? ''}:${(header as ClientHeader).parentRequestId ?? ''}:${(header as ClientHeader).timeout}`;
+    else if ((header as ClientHeader).parentRequestId) headerLine += `:${(header as ClientHeader).requestId ?? ''}:${(header as ClientHeader).parentRequestId}`;
+    else if (header.requestId) headerLine += `:${header.requestId}`;
 
     // Return the serialized message string
-    return `${headerLine}\n${payloadLine}`;
+    return `${headerLine}\n${serializePayload(payload, replacer)}`;
 }
 
 export function toBrokerHeader(header: ClientHeader, action: ActionType = header.action, requestId?: string): BrokerHeader {
     // If no requestId is provided, generate a new one
     if (!requestId) requestId = randomUUID();
     // Create the broker header
-    return { action, topic: header.topic, version: header.version, requestid: requestId, parentRequestId: header.requestid } as BrokerHeader;
+    return { action, topic: header.topic, version: header.version, requestId, parentRequestId: requestId === header.requestId ? undefined : header.requestId } as BrokerHeader;
 }

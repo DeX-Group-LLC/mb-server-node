@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { config } from '@config';
 import { Connection, ConnectionState } from '@core/connection/types';
 import { InternalError, MalformedMessageError, MessageError } from '@core/errors';
 import { MonitoringManager } from '@core/monitoring';
@@ -6,11 +7,37 @@ import { ServiceRegistry } from '@core/registry';
 import { MessageRouter } from '@core/router';
 import { SubscriptionManager } from '@core/subscription';
 import { ActionType } from '@core/types';
-import { BrokerHeader, ClientHeader, Exact, MessageUtils, Payload } from '@core/utils';
+import { BrokerHeader, ClientHeader, Exact, Message, MessageUtils, Payload } from '@core/utils';
 import { SetupLogger } from '@utils/logger';
 import { ConnectionMetrics } from './metrics';
 
 const logger = SetupLogger('ConnectionManager');
+
+/**
+ * The header for a message audit when the broker sends a message to a client.
+ */
+interface BrokerMessageAudit {
+    timestamp: string; // The ISO-8601 timestamp of when the message was sent
+    to: string; // The service id of the client
+    message: {
+        header: BrokerHeader;
+        payload: string;
+    }; // The original broker message
+    maskedId?: string; // The response id that the broker overwrote
+}
+
+/**
+ * The header for a message audit when the broker receives a message from a client.
+ */
+interface ClientMessageAudit {
+    timestamp: string; // The ISO-8601 timestamp of when the message was received
+    timeout: number; // The timeout of the request
+    from: string; // The service id of the client
+    message: {
+        header: ClientHeader;
+        payload: string;
+    }; // The original client message
+}
 
 /**
  * The header for an error message when the message header are malformed.
@@ -109,7 +136,7 @@ export class ConnectionManager {
      * @param header The message header.
      * @param payload The message payload.
      */
-    sendMessage<T>(serviceId: string, header: Exact<T, BrokerHeader>, payload: Payload | Buffer = {}): void {
+    sendMessage<T>(serviceId: string, header: Exact<T, BrokerHeader>, payload: Payload = {}, maskedId: string | undefined): void {
         const connection = this._resolveConnection(serviceId);
         if (!connection) return;
 
@@ -121,9 +148,9 @@ export class ConnectionManager {
         const subscribers = this.subscriptionManager.getSubscribers('system.message');
         if (subscribers.length) {
             const subHeader = { action: ActionType.PUBLISH, topic: 'system.message', version: '1.0.0' } as BrokerHeader;
-            const msg = MessageUtils.serialize(subHeader, { from: 'message-broker', to: serviceId, header });
+            const message = { header, payload } as any as BrokerMessageAudit['message'];
+            const msg = MessageUtils.serialize(subHeader, { timestamp: new Date().toISOString(), to: serviceId, message, maskedId } as BrokerMessageAudit);
             // Forward the message to all subscribers
-            logger.info(`Publishing message to topic: ${subHeader.topic}`);
             for (const subscriber of subscribers) {
                 const connection = this._resolveConnection(subscriber);
                 if (!connection) continue;
@@ -151,9 +178,9 @@ export class ConnectionManager {
             const subscribers = this.subscriptionManager.getSubscribers('system.message');
             if (subscribers.length) {
                 const subHeader = { action: ActionType.PUBLISH, topic: 'system.message', version: '1.0.0' } as BrokerHeader;
-                const msg = MessageUtils.serialize(subHeader, { from: connection.serviceId, to: 'message-broker', header: parser.header });
+                const message = { header: parser.header, payload: 'payload' } as any as ClientMessageAudit['message'];
+                const msg = MessageUtils.serialize(subHeader, { timestamp: new Date().toISOString(), timeout: parser.header.timeout ?? config.request.response.timeout.default, from: connection.serviceId, message } as any as ClientMessageAudit).replace('"payload":"payload"', `"payload":${parser!.rawPayload.toString('utf-8')}`);
                 // Forward the message to all subscribers
-                logger.info(`Publishing message to topic: ${parser.header.topic}`);
                 for (const subscriber of subscribers) {
                     const connection = this._resolveConnection(subscriber);
                     if (!connection) continue;
@@ -165,7 +192,7 @@ export class ConnectionManager {
             this.messageRouter.routeMessage(connection.serviceId, parser);
         } catch (error) {
             // Set the action to Response
-            const header = parser?.header ? { ...parser.header, action: ActionType.RESPONSE } : ERROR_HEADER;
+            const header = parser?.header ? MessageUtils.toBrokerHeader(parser.header, ActionType.RESPONSE, parser.header.requestId) : ERROR_HEADER;
             // If the error is a MessageError, send an error message to the client
             if (error instanceof MessageError) {
                 logger.error(`[${error.code}] ${error.message}`, { serviceId: connection.serviceId, error });

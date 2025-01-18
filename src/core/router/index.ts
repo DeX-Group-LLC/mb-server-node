@@ -114,7 +114,7 @@ export class MessageRouter {
                     this.metrics.messageRateError.slot.add(1);
                     const header = MessageUtils.toBrokerHeader(parser.header, ActionType.RESPONSE);
                     const payload = { error: new MalformedMessageError(`Unknown action type: ${action}`).toJSON() };
-                    this.connectionManager.sendMessage(serviceId, header, payload);
+                    this.connectionManager.sendMessage(serviceId, header, payload, undefined);
             }
         } catch (error) {
             this.metrics.messageCountError.slot.add(1);
@@ -144,9 +144,9 @@ export class MessageRouter {
         if (subscribers.length === 0) {
             logger.debug(`No subscribers for topic: ${topic}`);
             // Send an error response to the requester
-            const responseHeader = MessageUtils.toBrokerHeader(parser.header, ActionType.RESPONSE);
+            const responseHeader = MessageUtils.toBrokerHeader(parser.header, ActionType.RESPONSE, parser.header.requestId);
             const responsePayload = { error: new NoRouteFoundError(`No subscribers for topic ${topic}`).toJSON() };
-            this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
+            this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload, undefined);
             this.metrics.publishCountDropped.slot.add(1);
             this.metrics.publishRateDropped.slot.add(1);
             return false;
@@ -157,15 +157,15 @@ export class MessageRouter {
         // Forward the message to all subscribers
         logger.info(`Publishing message to topic: ${topic} for service: ${serviceId}`);
         for (const subscriber of subscribers) {
-            this.connectionManager.sendMessage(subscriber, forwardedHeader, parser.rawPayload);
+            this.connectionManager.sendMessage(subscriber, forwardedHeader, parser.rawPayload, parser.header.requestId);
         }
 
         // If the message had a requestId, send a response to the original sender
-        if (parser.header.requestid) {
-            const responseHeader = MessageUtils.toBrokerHeader(parser.header, ActionType.RESPONSE);
+        if (parser.header.requestId) {
+            const responseHeader = MessageUtils.toBrokerHeader(parser.header, ActionType.RESPONSE, parser.header.requestId);
             const payload = { status: 'success' };
-            this.connectionManager.sendMessage(serviceId, responseHeader, payload);
-            logger.info(`Sent publish response to service: ${serviceId} for request: ${parser.header.requestid}`);
+            this.connectionManager.sendMessage(serviceId, responseHeader, payload, undefined);
+            logger.info(`Sent publish response to service: ${serviceId} for request: ${parser.header.requestId}`);
         }
 
         return true;
@@ -196,9 +196,9 @@ export class MessageRouter {
         // Check if the number of outstanding requests has reached the limit
         if (this.requests.size >= config.max.outstanding.requests) {
             logger.warn(`Maximum number of outstanding requests reached (${config.max.outstanding.requests})`);
-            const responseHeader = MessageUtils.toBrokerHeader(parser.header, ActionType.RESPONSE);
+            const responseHeader = MessageUtils.toBrokerHeader(parser.header, ActionType.RESPONSE, parser.header.requestId);
             const responsePayload = { error: new ServiceUnavailableError('Maximum number of outstanding requests reached').toJSON() };
-            this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
+            this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload, undefined);
             this.metrics.requestCountDropped.slot.add(1);
             this.metrics.requestRateDropped.slot.add(1);
             return false;
@@ -214,7 +214,7 @@ export class MessageRouter {
         // Add the targetRequestId to the message header before forwarding
         const forwardedHeader = MessageUtils.toBrokerHeader(parser.header, undefined, request.targetRequestId);
         logger.info(`Forwarding request for topic: ${topic} from service: ${serviceId} to: ${targetServiceId} with new request ID: ${request.targetRequestId}`);
-        this.connectionManager.sendMessage(targetServiceId, forwardedHeader, parser.rawPayload);
+        this.connectionManager.sendMessage(targetServiceId, forwardedHeader, parser.rawPayload, parser.header.requestId);
 
         return true;
     }
@@ -227,7 +227,7 @@ export class MessageRouter {
      * @returns True if the response was successfully handled, false otherwise.
      */
     private handleResponse(serviceId: string, parser: MessageUtils.Parser): boolean {
-        const targetRequestId = parser.header.requestid;
+        const targetRequestId = parser.header.requestId;
         const { topic } = parser.header;
 
         // Handle system messages
@@ -252,7 +252,7 @@ export class MessageRouter {
         // Send the response to the original requester
         if (request.originalRequestId || parser.hasError) {
             const responseHeader = MessageUtils.toBrokerHeader(request.originalHeader, ActionType.RESPONSE, request.originalRequestId);
-            this.connectionManager.sendMessage(request.originServiceId, responseHeader, parser.rawPayload);
+            this.connectionManager.sendMessage(request.originServiceId, responseHeader, parser.rawPayload, undefined);
             if (parser.hasError) {
                 logger.warn(`Error received from service: ${request.targetServiceId} for request: ${request.targetRequestId}`, { serviceId: request.targetServiceId });
                 this.metrics.responseCountError.slot.add(1);
@@ -285,10 +285,10 @@ export class MessageRouter {
             targetServiceId,
             targetRequestId,
             originalHeader,
-            timeout: originalHeader.requestid ? setTimeout(() => {
+            timeout: originalHeader.requestId ? setTimeout(() => {
                 // NOTE: If this runs, the request is still in the map
                 this.requests.delete(`${targetServiceId}:${targetRequestId}`);
-                logger.warn(`Request ${originServiceId}:${originalHeader.requestid} to ${targetServiceId}:${targetRequestId} timed out`);
+                logger.warn(`Request ${originServiceId}:${originalHeader.requestId} to ${targetServiceId}:${targetRequestId} timed out`);
 
                 // Track timeout metrics
                 this.metrics.requestCountTimeout.slot.add(1);
@@ -297,7 +297,7 @@ export class MessageRouter {
                 // Send a timeout error back to the original requester
                 const responsePayload = { error: new TimeoutError('Request timed out').toJSON() };
                 const responseHeader = MessageUtils.toBrokerHeader(originalHeader, ActionType.RESPONSE);
-                this.connectionManager.sendMessage(originServiceId, responseHeader, responsePayload);
+                this.connectionManager.sendMessage(originServiceId, responseHeader, responsePayload, undefined);
             }, originalHeader.timeout ?? config.request.response.timeout.default) : undefined,
             createdAt: new Date(),
         };
@@ -317,7 +317,7 @@ export class MessageRouter {
                 this.removeRequest(oldestRequest.targetServiceId, oldestRequest.targetRequestId);
                 const responseHeader = MessageUtils.toBrokerHeader(oldestRequest.originalHeader, ActionType.RESPONSE, oldestRequest.originServiceId);
                 const responsePayload = { error: new ServiceUnavailableError('Message broker is busy').toJSON() };
-                this.connectionManager.sendMessage(oldestRequest.originServiceId, responseHeader, responsePayload);
+                this.connectionManager.sendMessage(oldestRequest.originServiceId, responseHeader, responsePayload, undefined);
                 logger.warn(`Removed oldest request ${oldestRequest.originalRequestId} from ${oldestRequest.originServiceId} due to exceeding max outstanding requests`);
                 this.metrics.requestCountDropped.slot.add(1);
                 this.metrics.requestRateDropped.slot.add(1);

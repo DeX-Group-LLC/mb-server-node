@@ -16,6 +16,8 @@ import { isUUID4 } from '@core/utils/uuid4';
 
 const logger = SetupLogger('ServiceRegistry');
 
+const SUBSCRIBABLE_SYSTEM_TOPICS = new Set(['system.log', 'system.message', 'system.service.register', 'system.topic.subscribe', 'system.topic.unsubscribe']);
+
 interface ServiceRegistration {
     id: string;
     name: string;
@@ -70,7 +72,7 @@ export class ServiceRegistry {
             if (service.logSubscriptions.levels.includes(message.level) && (service.logSubscriptions.regex === undefined || service.logSubscriptions.regex.test(message.message))) {
                 // Send the log message to the service
                 try {
-                    this.connectionManager.sendMessage(service.id, header, message);
+                    this.connectionManager.sendMessage(service.id, header, message, undefined);
                 } catch (error) {
                     logger.error(`Error sending log message to service ${service.id}:`, error);
                 }
@@ -196,7 +198,7 @@ export class ServiceRegistry {
      * @param message The received message.
      */
     handleSystemMessage(serviceId: string, message: MessageUtils.Parser): void {
-        logger.debug(`Received system message ${message.header.action}:${message.header.topic}:${message.header.version}${message.header.requestid ? ':' +message.header.requestid : ''}`, { serviceId, header: message.header });
+        logger.debug(`Received system message ${message.header.action}:${message.header.topic}:${message.header.version}${message.header.requestId ? ':' +message.header.requestId : ''}`, { serviceId, header: message.header });
 
         // Check the actions are valid
         if (message.header.topic === 'system.heartbeat') {
@@ -248,7 +250,7 @@ export class ServiceRegistry {
                     throw new TopicNotSupportedError(`Unknown system message topic: ${message.header.topic}`);
             }
         } catch (error) {
-            logger.error(`Error handling system message ${message.header.action}:${message.header.topic}:${message.header.version}:${message.header.requestid ? ':' +message.header.requestid : ''}:`, { serviceId, error });
+            logger.error(`Error handling system message ${message.header.action}:${message.header.topic}:${message.header.version}:${message.header.requestId ? ':' +message.header.requestId : ''}:`, { serviceId, error });
             this.metrics.serviceErrorRate.getMetric({ serviceId })?.slot.add(1);
             throw error;
         }
@@ -256,7 +258,7 @@ export class ServiceRegistry {
 
     private sendHeartbeat(serviceId: string): void {
         const header: BrokerHeader = { action: ActionType.REQUEST, topic: 'system.heartbeat', version: '1.0.0' };
-        this.connectionManager.sendMessage(serviceId, header);
+        this.connectionManager.sendMessage(serviceId, header, undefined, undefined);
     }
 
     resetHeartbeat(serviceIdOrService: string | ServiceRegistration): void {
@@ -290,9 +292,9 @@ export class ServiceRegistry {
 
         // If the message is a request, send a response, ignore for responses
         if (message.header.action === ActionType.REQUEST) {
-            const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestid);
+            const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestId);
             const responsePayload = { status: 'success' };
-            this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
+            this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload, undefined);
         }
     }
 
@@ -346,9 +348,9 @@ export class ServiceRegistry {
         }
 
         // Send a success response
-        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestid);
+        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestId);
         const responsePayload = { status: 'success' };
-        this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
+        this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload, undefined);
     }
 
     /**
@@ -371,9 +373,9 @@ export class ServiceRegistry {
         this.subscriptionManager.unsubscribe(serviceId, `system.log`);
 
         // Send a success response
-        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestid);
+        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestId);
         const responsePayload = { status: 'success' };
-        this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
+        this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload, undefined);
     }
 
     /**
@@ -394,9 +396,9 @@ export class ServiceRegistry {
         const { showAll, paramFilter } = message.parsePayload<{ showAll: boolean, paramFilter?: Record<string, string> }>();
         const metrics = this.monitoringManager.serializeMetrics(showAll, paramFilter);
 
-        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestid);
+        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestId);
         const responsePayload = { metrics };
-        this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
+        this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload, undefined);
     }
 
     /**
@@ -414,9 +416,9 @@ export class ServiceRegistry {
             lastHeartbeat: service.lastHeartbeat.toISOString(),
         }));
 
-        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestid);
+        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestId);
         const responsePayload = { services };
-        this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
+        this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload, undefined);
 
         this.metrics.discoveryRate.slot.add(1);
     }
@@ -450,9 +452,9 @@ export class ServiceRegistry {
         // Get the latest subscriptions for the service given:
         const subscriptions = this.subscriptionManager.getSubscribedInfo(targetServiceId);
 
-        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestid);
+        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestId);
         const responsePayload = { subscriptions };
-        this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
+        this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload, undefined);
     }
 
     /**
@@ -473,9 +475,9 @@ export class ServiceRegistry {
         this.registerService(serviceId, name, description);
 
         // Send a success response
-        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestid);
+        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestId);
         const responsePayload = { status: 'success' };
-        this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
+        this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload, undefined);
     }
 
     /**
@@ -486,9 +488,9 @@ export class ServiceRegistry {
      */
     private handleTopicList(serviceId: string, message: MessageUtils.Parser): void {
         const topics = this.subscriptionManager.getAllSubscribedTopics();
-        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestid);
+        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestId);
         const responsePayload = { topics };
-        this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
+        this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload, undefined);
     }
 
     /**
@@ -499,9 +501,9 @@ export class ServiceRegistry {
      */
     private handleTopicSubscribers(serviceId: string, message: MessageUtils.Parser): void {
         const subscribers = this.subscriptionManager.getAllSubscribedTopicWithSubscribers();
-        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestid);
+        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestId);
         const responsePayload = { subscribers };
-        this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
+        this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload, undefined);
     }
 
     /**
@@ -518,8 +520,8 @@ export class ServiceRegistry {
             throw new InvalidRequestError('Missing or invalid topic', { topic });
         }
 
-        // Only allow subscribing to topics that are not system topics, or system.service.register, or system.topic.subscribe
-        if (topic.startsWith('system.') && topic !== 'system.service.register' && topic !== 'system.topic.subscribe') {
+        // Only allow subscribing to topics that are not restricted system topics
+        if (topic.startsWith('system.') && !SUBSCRIBABLE_SYSTEM_TOPICS.has(topic)) {
             throw new InvalidRequestError('Unable to subscribe to restricted topic', { topic });
         }
 
@@ -529,9 +531,9 @@ export class ServiceRegistry {
         }
 
         const success = this.subscriptionManager.subscribe(serviceId, topic, priority);
-        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestid);
+        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestId);
         const responsePayload = { status: success ? 'success' : 'failure' };
-        this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
+        this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload, undefined);
     }
 
     /**
@@ -553,8 +555,8 @@ export class ServiceRegistry {
         }
 
         const success = this.subscriptionManager.unsubscribe(serviceId, topic);
-        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestid);
+        const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestId);
         const responsePayload = { status: success ? 'success' : 'failure' };
-        this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload);
+        this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload, undefined);
     }
 }

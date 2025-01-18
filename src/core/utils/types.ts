@@ -15,7 +15,7 @@ export type BrokerHeader = {
     version: string;
 
     /** Optional unique identifier for request-response message pairs */
-    requestid?: string;
+    requestId?: string;
 
     /** Optional unique identifier for parent request-response message pairs */
     parentRequestId?: string;
