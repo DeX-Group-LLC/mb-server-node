@@ -178,8 +178,8 @@ export class ConnectionManager {
             const subscribers = this.subscriptionManager.getSubscribers('system.message');
             if (subscribers.length) {
                 const subHeader = { action: ActionType.PUBLISH, topic: 'system.message', version: '1.0.0' } as BrokerHeader;
-                const message = { header: parser.header, payload: 'payload' } as any as ClientMessageAudit['message'];
-                const msg = MessageUtils.serialize(subHeader, { timestamp: new Date().toISOString(), timeout: parser.header.timeout ?? config.request.response.timeout.default, from: connection.serviceId, message } as any as ClientMessageAudit).replace('"payload":"payload"', `"payload":${parser!.rawPayload.toString('utf-8')}`);
+                const message = { header: parser.header, payload: {} } as any as ClientMessageAudit['message'];
+                const msg = MessageUtils.serialize(subHeader, { timestamp: new Date().toISOString(), timeout: parser.header.timeout ?? config.request.response.timeout.default, from: connection.serviceId, message } as any as ClientMessageAudit).replace('"payload":{}', `"payload":${parser!.rawPayload.toString('utf-8')}`);
                 // Forward the message to all subscribers
                 for (const subscriber of subscribers) {
                     const connection = this._resolveConnection(subscriber);
