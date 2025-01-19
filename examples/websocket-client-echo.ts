@@ -26,9 +26,9 @@ function createMessage(action: ActionType, topic: string, payload: any = {}, req
 }
 
 // Create WebSocket connections based on configuration
-const requester = ENABLE_REQUESTER ? new WebSocket(`ws://${config.host}:${config.port}`) : null;
-const responder = ENABLE_RESPONDER ? new WebSocket(`ws://${config.host}:${config.port}`) : null;
-const listener = ENABLE_LISTENER ? new WebSocket(`ws://${config.host}:${config.port}`) : null;
+const requester = ENABLE_REQUESTER ? new WebSocket(`${process.env.WS_PROTOCOL ?? 'ws'}://${config.host}:${config.port}`) : null;
+const responder = ENABLE_RESPONDER ? new WebSocket(`${process.env.WS_PROTOCOL ?? 'ws'}://${config.host}:${config.port}`) : null;
+const listener = ENABLE_LISTENER ? new WebSocket(`${process.env.WS_PROTOCOL ?? 'ws'}://${config.host}:${config.port}`) : null;
 
 // Requester setup
 if (requester) {
