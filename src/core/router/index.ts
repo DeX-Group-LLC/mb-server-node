@@ -162,12 +162,12 @@ export class MessageRouter {
 
         // If the message had a requestId, send a response to the original sender
         // NOTE: This is commented out for now due to tracer code issues.
-        /*if (parser.header.requestId) {
+        if (parser.header.requestId) {
             const responseHeader = MessageUtils.toBrokerHeader(parser.header, ActionType.RESPONSE, parser.header.requestId);
             const payload = { status: 'success' };
             this.connectionManager.sendMessage(serviceId, responseHeader, payload, undefined);
             logger.info(`Sent publish response to service: ${serviceId} for request: ${parser.header.requestId}`);
-        }*/
+        }
 
         return true;
     }
@@ -301,7 +301,7 @@ export class MessageRouter {
                 this.metrics.requestRateTimeout.slot.add(1);
 
                 // Send a timeout error back to the original requester
-                const responsePayload = { error: new TimeoutError('Request timed out').toJSON() };
+                const responsePayload = { error: new TimeoutError('Request timed out', { targetServiceId }).toJSON() };
                 const responseHeader = MessageUtils.toBrokerHeader(originalHeader, ActionType.RESPONSE, originalHeader.requestId);
                 this.connectionManager.sendMessage(originServiceId, responseHeader, responsePayload, undefined);
             }, originalHeader.timeout ?? config.request.response.timeout.default) : undefined,

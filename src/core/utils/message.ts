@@ -212,5 +212,5 @@ export function toBrokerHeader(header: ClientHeader, action: ActionType = header
     // If no requestId is provided, generate a new one
     if (!requestId) requestId = randomUUID();
     // Create the broker header
-    return { action, topic: header.topic, version: header.version, requestId, parentRequestId: requestId === header.requestId ? undefined : header.requestId } as BrokerHeader;
+    return { action, topic: header.topic, version: header.version, requestId/*, parentRequestId: requestId === header.requestId ? undefined : header.requestId */} as BrokerHeader;
 }
