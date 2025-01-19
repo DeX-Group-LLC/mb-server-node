@@ -125,7 +125,7 @@ if (listener) {
             listener.send(createMessage(ActionType.RESPONSE, 'test.trigger.request', payload, requestId));
 
             // Send test.no_route publish message with the trigger request as parent
-            listener.send(createMessage(ActionType.PUBLISH, 'test.no_route', {
+            listener.send(createMessage(ActionType.PUBLISH, 'test.noroute', {
                 timestamp: new Date().toISOString(),
                 triggeredBy: 'listener'
             }, randomUUID(), requestId));
