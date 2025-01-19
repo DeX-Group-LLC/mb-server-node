@@ -122,9 +122,9 @@ export class Parser {
 
         // Validate the request ID
         if (header.requestId !== undefined) {
-            if (header.action !== ActionType.REQUEST) {
+            /*if (header.action !== ActionType.REQUEST) {
                 throw new MalformedMessageError(`Request ID is only allowed for request actions`, { action: header.action });
-            }
+            }*/
             if (!isUUID4(header.requestId)) {
                 throw new MalformedMessageError(`Invalid request ID format: ${header.requestId}`, { requestId: header.requestId });
             }

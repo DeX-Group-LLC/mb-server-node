@@ -15,7 +15,6 @@ const logger = SetupLogger('MessageRouter');
 export interface Request {
     originServiceId: string;
     targetServiceId: string;
-    originalRequestId?: string;
     targetRequestId: string;
     originalHeader: ClientHeader;
     timeout?: NodeJS.Timeout;
@@ -153,7 +152,8 @@ export class MessageRouter {
         }
 
         // Remove the requestId from the header before forwarding
-        const forwardedHeader = MessageUtils.toBrokerHeader(parser.header);
+        const newRequestId = this.generateRequestId();
+        const forwardedHeader = MessageUtils.toBrokerHeader(parser.header, undefined, newRequestId);
         // Forward the message to all subscribers
         logger.info(`Publishing message to topic: ${topic} for service: ${serviceId}`);
         for (const subscriber of subscribers) {
@@ -161,12 +161,13 @@ export class MessageRouter {
         }
 
         // If the message had a requestId, send a response to the original sender
-        if (parser.header.requestId) {
+        // NOTE: This is commented out for now due to tracer code issues.
+        /*if (parser.header.requestId) {
             const responseHeader = MessageUtils.toBrokerHeader(parser.header, ActionType.RESPONSE, parser.header.requestId);
             const payload = { status: 'success' };
             this.connectionManager.sendMessage(serviceId, responseHeader, payload, undefined);
             logger.info(`Sent publish response to service: ${serviceId} for request: ${parser.header.requestId}`);
-        }
+        }*/
 
         return true;
     }
@@ -250,16 +251,16 @@ export class MessageRouter {
         this.removeRequest(request.targetServiceId, request.targetRequestId);
 
         // Send the response to the original requester
-        if (request.originalRequestId || parser.hasError) {
-            const responseHeader = MessageUtils.toBrokerHeader(request.originalHeader, ActionType.RESPONSE, request.originalRequestId);
+        if (request.originalHeader.requestId || parser.hasError) {
+            const responseHeader = MessageUtils.toBrokerHeader(request.originalHeader, ActionType.RESPONSE, request.originalHeader.requestId);
             this.connectionManager.sendMessage(request.originServiceId, responseHeader, parser.rawPayload, undefined);
             if (parser.hasError) {
                 logger.warn(`Error received from service: ${request.targetServiceId} for request: ${request.targetRequestId}`, { serviceId: request.targetServiceId });
                 this.metrics.responseCountError.slot.add(1);
                 this.metrics.responseRateError.slot.add(1);
             }
-            if (request.originalRequestId) {
-                logger.debug(`Sent request response to service: ${request.originServiceId} for request: ${request.originalRequestId}`);
+            if (request.originalHeader.requestId) {
+                logger.debug(`Sent request response to service: ${request.originServiceId} for request: ${request.originalHeader.requestId}`);
             } else {
                 logger.debug(`Sent request response to service: ${request.originServiceId}`);
             }
@@ -288,7 +289,12 @@ export class MessageRouter {
             timeout: originalHeader.requestId ? setTimeout(() => {
                 // NOTE: If this runs, the request is still in the map
                 this.requests.delete(`${targetServiceId}:${targetRequestId}`);
-                logger.warn(`Request ${originServiceId}:${originalHeader.requestId} to ${targetServiceId}:${targetRequestId} timed out`);
+                logger.warn(`Request ${originServiceId}:${originalHeader.requestId} to ${targetServiceId}:${targetRequestId} timed out`, {
+                    originServiceId,
+                    originalHeader,
+                    targetServiceId,
+                    targetRequestId,
+                });
 
                 // Track timeout metrics
                 this.metrics.requestCountTimeout.slot.add(1);
@@ -296,7 +302,7 @@ export class MessageRouter {
 
                 // Send a timeout error back to the original requester
                 const responsePayload = { error: new TimeoutError('Request timed out').toJSON() };
-                const responseHeader = MessageUtils.toBrokerHeader(originalHeader, ActionType.RESPONSE);
+                const responseHeader = MessageUtils.toBrokerHeader(originalHeader, ActionType.RESPONSE, originalHeader.requestId);
                 this.connectionManager.sendMessage(originServiceId, responseHeader, responsePayload, undefined);
             }, originalHeader.timeout ?? config.request.response.timeout.default) : undefined,
             createdAt: new Date(),
@@ -318,7 +324,7 @@ export class MessageRouter {
                 const responseHeader = MessageUtils.toBrokerHeader(oldestRequest.originalHeader, ActionType.RESPONSE, oldestRequest.originServiceId);
                 const responsePayload = { error: new ServiceUnavailableError('Message broker is busy').toJSON() };
                 this.connectionManager.sendMessage(oldestRequest.originServiceId, responseHeader, responsePayload, undefined);
-                logger.warn(`Removed oldest request ${oldestRequest.originalRequestId} from ${oldestRequest.originServiceId} due to exceeding max outstanding requests`);
+                logger.warn(`Removed oldest request ${oldestRequest.originalHeader.requestId} from ${oldestRequest.originServiceId} due to exceeding max outstanding requests`);
                 this.metrics.requestCountDropped.slot.add(1);
                 this.metrics.requestRateDropped.slot.add(1);
             }
