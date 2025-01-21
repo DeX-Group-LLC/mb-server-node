@@ -40,6 +40,14 @@ if (requester) {
             description: 'Sends test requests periodically'
         }, randomUUID()));
 
+        if (ENABLE_LISTENER) {
+            // Subscribe to test.trigger.publish
+            requester.send(createMessage(ActionType.REQUEST, 'system.topic.subscribe', {
+                topic: 'test.end',
+                priority: 2
+            }, randomUUID()));
+        }
+
         // Send test messages every 2 seconds
         setInterval(() => {
             const requestId = randomUUID();
@@ -48,6 +56,11 @@ if (requester) {
                 message: 'Hello from requester!'
             }, requestId));
         }, 2000);
+    });
+
+    requester.on('message', (data: Buffer) => {
+        const message = data.toString();
+        console.log('Requester received message:', message);
     });
 }
 
@@ -125,13 +138,13 @@ if (listener) {
             listener.send(createMessage(ActionType.RESPONSE, 'test.trigger.request', payload, requestId));
 
             // Send test.no_route publish message with the trigger request as parent
-            listener.send(createMessage(ActionType.PUBLISH, 'test.noroute', {
+            listener.send(createMessage(ActionType.REQUEST, 'test.noroute', {
                 timestamp: new Date().toISOString(),
                 triggeredBy: 'listener'
             }, randomUUID(), requestId));
 
             // Send test.end publish message with the trigger request as parent
-            listener.send(createMessage(ActionType.REQUEST, 'test.end', {
+            listener.send(createMessage(ActionType.PUBLISH, 'test.end', {
                 timestamp: new Date().toISOString(),
                 triggeredBy: 'listener'
             }, randomUUID(), requestId, 500));
