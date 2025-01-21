@@ -79,6 +79,14 @@ if (responder) {
             topic: 'test.message',
             priority: 1
         }, randomUUID()));
+
+        if (ENABLE_LISTENER) {
+            // Subscribe to test.trigger.publish
+            responder.send(createMessage(ActionType.REQUEST, 'system.topic.subscribe', {
+                topic: 'test.end',
+                priority: 0
+            }, randomUUID()));
+        }
     });
 
     responder.on('message', (data: Buffer) => {
