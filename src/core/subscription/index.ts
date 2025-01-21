@@ -38,7 +38,7 @@ export class SubscriptionManager {
 
         let i = 0;
         let index = 0;
-        // Iterate while priority is greater OR equal and check for existing subscription
+        // Iterate while priority is less than OR equal and check for existing subscription
         while (i < subscribers.length) {
             if (subscribers[i].serviceId === serviceId) {
                 if (subscribers[i].priority === priority) {
@@ -50,7 +50,7 @@ export class SubscriptionManager {
                     continue;
                 }
             }
-            if (subscribers[i].priority < priority) {
+            if (subscribers[i].priority > priority) {
                 index = i;
             }
             i++;
