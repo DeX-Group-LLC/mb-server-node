@@ -152,9 +152,11 @@ activeConnections.forEach(({ ws, name }) => {
         if (err.message.includes('ECONNREFUSED')) {
             console.error(`Could not connect to the Message Broker. Make sure it is running and the host/port are correct.`);
         }
+        process.exit(1);
     });
 
     (ws as WebSocket).on('close', () => {
         console.log(`${name} disconnected`);
+        process.exit(0);
     });
 });
