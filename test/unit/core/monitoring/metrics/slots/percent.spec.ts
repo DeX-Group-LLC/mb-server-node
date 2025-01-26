@@ -18,30 +18,14 @@ describe('PercentSlot', () => {
         expect(() => slot.set(1.1)).toThrow('Percentage value must be between 0 and 1');
     });
 
-    it('should set value from raw percentage', () => {
-        slot.setFromRawPercent(50);
-        expect(slot.get()).toBe(0.5);
-
-        slot.setFromRawPercent(100);
-        expect(slot.get()).toBe(1);
-
-        slot.setFromRawPercent(0);
-        expect(slot.get()).toBe(0);
-    });
-
-    it('should get raw percentage value', () => {
+    it('should store and retrieve percentage values correctly', () => {
         slot.set(0.5);
-        expect(slot.getRawPercent()).toBe(50);
+        expect(slot.value).toBe(0.5);
 
         slot.set(1);
-        expect(slot.getRawPercent()).toBe(100);
+        expect(slot.value).toBe(1);
 
         slot.set(0);
-        expect(slot.getRawPercent()).toBe(0);
-    });
-
-    it('should throw error for invalid raw percentage values', () => {
-        expect(() => slot.setFromRawPercent(-10)).toThrow();
-        expect(() => slot.setFromRawPercent(110)).toThrow();
+        expect(slot.value).toBe(0);
     });
 });

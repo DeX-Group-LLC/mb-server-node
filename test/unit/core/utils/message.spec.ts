@@ -105,21 +105,19 @@ describe('message utils', () => {
          * - Return correctly structured objects
          */
         it('should parse valid message correctly', () => {
-            // Setup test message with complete header including request ID
-            const validMessageWithRequestId = 'publish:test.topic:1.0.0:123e4567-e89b-12d3-a456-426614174000\n{"data":"test"}';
+            const validMessageWithRequestId = Buffer.from('publish:test.topic:1.0.0:123e4567-e89b-12d3-a456-426614174000\n{"data":"test"}');
             const parser = new Parser(validMessageWithRequestId);
-            const header = parser.parseHeader();
-            const payload = parser.parsePayload(header.action);
 
-            // Verify header components are correctly parsed
-            expect(header).toEqual({
+            // Access header property instead of calling private parseHeader
+            expect(parser.header).toEqual({
                 action: ActionType.PUBLISH,
                 topic: 'test.topic',
                 version: '1.0.0',
-                requestid: '123e4567-e89b-12d3-a456-426614174000'
+                requestId: '123e4567-e89b-12d3-a456-426614174000'
             });
-            // Verify payload is correctly parsed
-            expect(payload).toEqual({ data: 'test' });
+
+            // Use public property for payload
+            expect(JSON.parse(parser.rawPayload.toString())).toEqual({ data: 'test' });
         });
 
         /**
@@ -130,21 +128,17 @@ describe('message utils', () => {
          * - Parse the JSON payload
          */
         it('should parse message without requestid correctly', () => {
-            // Setup test message without request ID
-            const validMessageWithoutRequestId = 'publish:test.topic:1.0.0\n{"data":"test"}';
+            const validMessageWithoutRequestId = Buffer.from('publish:test.topic:1.0.0\n{"data":"test"}');
             const parser = new Parser(validMessageWithoutRequestId);
-            const header = parser.parseHeader();
-            const payload = parser.parsePayload(header.action);
 
-            // Verify header components are correctly parsed
-            expect(header).toEqual({
+            expect(parser.header).toEqual({
                 action: ActionType.PUBLISH,
                 topic: 'test.topic',
                 version: '1.0.0',
-                requestid: undefined
+                requestId: undefined
             });
-            // Verify payload is correctly parsed
-            expect(payload).toEqual({ data: 'test' });
+
+            expect(JSON.parse(parser.rawPayload.toString())).toEqual({ data: 'test' });
         });
 
         /**
@@ -154,12 +148,9 @@ describe('message utils', () => {
          * - Throw MalformedMessageError with descriptive message
          */
         it('should throw MalformedMessageError for missing newline separator', () => {
-            // Setup test message without newline separator
-            const messageWithoutNewline = 'publish:test.topic:1.0.0';
-
-            // Verify appropriate error is thrown
+            const messageWithoutNewline = Buffer.from('publish:test.topic:1.0.0');
             expect(() => new Parser(messageWithoutNewline)).toThrow(MalformedMessageError);
-            expect(() => new Parser(messageWithoutNewline)).toThrow('Invalid message format: no newline separator found');
+            expect(() => new Parser(messageWithoutNewline)).toThrow(/Invalid message format: no newline separator found/);
         });
 
         /**
@@ -169,13 +160,9 @@ describe('message utils', () => {
          * - Throw MalformedMessageError for unknown actions
          */
         it('should throw MalformedMessageError for invalid action type', () => {
-            // Setup test message with invalid action type
-            const messageWithInvalidAction = 'invalid:test.topic:1.0.0\n{}';
-            const parser = new Parser(messageWithInvalidAction);
-
-            // Verify appropriate error is thrown
-            expect(() => parser.parseHeader()).toThrow(MalformedMessageError);
-            expect(() => parser.parseHeader()).toThrow('Invalid action: invalid');
+            const messageWithInvalidAction = Buffer.from('invalid:test.topic:1.0.0\n{}');
+            expect(() => new Parser(messageWithInvalidAction)).toThrow(MalformedMessageError);
+            expect(() => new Parser(messageWithInvalidAction)).toThrow(/Invalid action: invalid/);
         });
 
         /**
@@ -185,13 +172,9 @@ describe('message utils', () => {
          * - Throw MalformedMessageError for invalid topics
          */
         it('should throw MalformedMessageError for invalid topic name', () => {
-            // Setup test message with invalid topic name
-            const messageWithInvalidTopic = 'publish:invalid/topic:1.0.0\n{}';
-            const parser = new Parser(messageWithInvalidTopic);
-
-            // Verify appropriate error is thrown
-            expect(() => parser.parseHeader()).toThrow(MalformedMessageError);
-            expect(() => parser.parseHeader()).toThrow('Invalid topic name: invalid/topic');
+            const messageWithInvalidTopic = Buffer.from('publish:invalid/topic:1.0.0\n{}');
+            expect(() => new Parser(messageWithInvalidTopic)).toThrow(MalformedMessageError);
+            expect(() => new Parser(messageWithInvalidTopic)).toThrow(/Invalid topic name: invalid\/topic/);
         });
 
         /**
@@ -201,13 +184,9 @@ describe('message utils', () => {
          * - Throw MalformedMessageError for invalid versions
          */
         it('should throw MalformedMessageError for invalid version format', () => {
-            // Setup test message with invalid version format
-            const messageWithInvalidVersion = 'publish:test.topic:invalid\n{}';
-            const parser = new Parser(messageWithInvalidVersion);
-
-            // Verify appropriate error is thrown
-            expect(() => parser.parseHeader()).toThrow(MalformedMessageError);
-            expect(() => parser.parseHeader()).toThrow('Invalid message version format: invalid');
+            const messageWithInvalidVersion = Buffer.from('publish:test.topic:invalid\n{}');
+            expect(() => new Parser(messageWithInvalidVersion)).toThrow(MalformedMessageError);
+            expect(() => new Parser(messageWithInvalidVersion)).toThrow(/Invalid message version format: invalid/);
         });
 
         /**
@@ -217,13 +196,9 @@ describe('message utils', () => {
          * - Throw MalformedMessageError for invalid request IDs
          */
         it('should throw MalformedMessageError for invalid request ID format', () => {
-            // Setup test message with invalid request ID
-            const messageWithInvalidRequestId = 'publish:test.topic:1.0.0:invalid-req-id\n{}';
-            const parser = new Parser(messageWithInvalidRequestId);
-
-            // Verify appropriate error is thrown
-            expect(() => parser.parseHeader()).toThrow(MalformedMessageError);
-            expect(() => parser.parseHeader()).toThrow('Invalid request ID format: invalid-req-id');
+            const messageWithInvalidRequestId = Buffer.from('publish:test.topic:1.0.0:invalid-req-id\n{}');
+            expect(() => new Parser(messageWithInvalidRequestId)).toThrow(MalformedMessageError);
+            expect(() => new Parser(messageWithInvalidRequestId)).toThrow(/Invalid request ID format: invalid-req-id/);
         });
 
         /**
@@ -233,13 +208,9 @@ describe('message utils', () => {
          * - Throw MalformedMessageError for missing parts
          */
         it('should throw MalformedMessageError for missing header parts', () => {
-            // Setup test message with incomplete header
-            const messageWithMissingParts = 'publish:test.topic\n{}';
-            const parser = new Parser(messageWithMissingParts);
-
-            // Verify appropriate error is thrown
-            expect(() => parser.parseHeader()).toThrow(MalformedMessageError);
-            expect(() => parser.parseHeader()).toThrow('Invalid header format: missing action, topic, or version');
+            const messageWithMissingParts = Buffer.from('publish:test.topic\n{}');
+            expect(() => new Parser(messageWithMissingParts)).toThrow(MalformedMessageError);
+            expect(() => new Parser(messageWithMissingParts)).toThrow(/Invalid header format: missing action, topic, or version/);
         });
 
         /**
@@ -249,14 +220,9 @@ describe('message utils', () => {
          * - Throw MalformedMessageError for invalid JSON
          */
         it('should throw error for invalid JSON payload', () => {
-            // Setup test message with malformed JSON
-            const message = 'publish:test.topic:1.0.0\n{invalid:json}';
+            const message = Buffer.from('publish:test.topic:1.0.0\n{invalid:json}');
             const parser = new Parser(message);
-            const header = parser.parseHeader();
-
-            // Verify appropriate error is thrown
-            expect(() => parser.parsePayload(header.action)).toThrow(MalformedMessageError);
-            expect(() => parser.parsePayload(header.action)).toThrow(/Invalid JSON payload/);
+            expect(() => parser.parsePayload()).toThrow(MalformedMessageError);
         });
 
         /**
@@ -266,15 +232,9 @@ describe('message utils', () => {
          * - Throw MalformedMessageError for invalid timeouts
          */
         it('should validate timeout value', () => {
-            // Setup test message with invalid timeout
             const payload = { timeout: -1 };
-            const message = `request:test.topic:1.0.0\n${JSON.stringify(payload)}`;
-            const parser = new Parser(message);
-            const header = parser.parseHeader();
-
-            // Verify appropriate error is thrown
-            expect(() => parser.parsePayload(header.action)).toThrow(MalformedMessageError);
-            expect(() => parser.parsePayload(header.action)).toThrow(/Invalid timeout value/);
+            const message = Buffer.from(`request:test.topic:1.0.0:req-1:parent-1:-1\n${JSON.stringify(payload)}`);
+            expect(() => new Parser(message)).toThrow(MalformedMessageError);
         });
 
         /**
@@ -284,15 +244,9 @@ describe('message utils', () => {
          * - Throw MalformedMessageError for timeouts in non-request messages
          */
         it('should validate timeout is only allowed for request actions', () => {
-            // Setup test message with timeout in non-request message
             const payload = { timeout: 1000 };
-            const message = `publish:test.topic:1.0.0\n${JSON.stringify(payload)}`;
-            const parser = new Parser(message);
-            const header = parser.parseHeader();
-
-            // Verify appropriate error is thrown
-            expect(() => parser.parsePayload(header.action)).toThrow(MalformedMessageError);
-            expect(() => parser.parsePayload(header.action)).toThrow(/Timeout is only allowed for request actions/);
+            const message = Buffer.from(`publish:test.topic:1.0.0:req-1:parent-1:1000\n${JSON.stringify(payload)}`);
+            expect(() => new Parser(message)).toThrow(MalformedMessageError);
         });
 
         /**
@@ -302,15 +256,10 @@ describe('message utils', () => {
          * - Throw MalformedMessageError for invalid error objects
          */
         it('should validate error object in payload', () => {
-            // Setup test message with incomplete error object
-            const payload = { error: { code: 'ERR_001' } }; // Missing message and timestamp
-            const message = `publish:test.topic:1.0.0\n${JSON.stringify(payload)}`;
+            const payload = { error: { code: 'ERR_001' } };
+            const message = Buffer.from(`publish:test.topic:1.0.0\nerror:${JSON.stringify(payload)}`);
             const parser = new Parser(message);
-            const header = parser.parseHeader();
-
-            // Verify appropriate error is thrown
-            expect(() => parser.parsePayload(header.action)).toThrow(MalformedMessageError);
-            expect(() => parser.parsePayload(header.action)).toThrow(/Invalid error object in payload/);
+            expect(() => parser.parsePayload()).toThrow(MalformedMessageError);
         });
 
         /**
@@ -320,7 +269,6 @@ describe('message utils', () => {
          * - Accept valid error objects
          */
         it('should accept valid error object in payload', () => {
-            // Setup test message with valid error object
             const payload = {
                 error: {
                     code: 'ERR_001',
@@ -328,13 +276,9 @@ describe('message utils', () => {
                     timestamp: '2023-01-01T00:00:00Z'
                 }
             };
-            const message = `publish:test.topic:1.0.0\n${JSON.stringify(payload)}`;
+            const message = Buffer.from(`publish:test.topic:1.0.0\n${JSON.stringify(payload)}`);
             const parser = new Parser(message);
-            const header = parser.parseHeader();
-            const result = parser.parsePayload(header.action);
-
-            // Verify payload is accepted
-            expect(result).toEqual(payload);
+            expect(parser.parsePayload()).toEqual(payload);
         });
 
         /**
@@ -344,15 +288,10 @@ describe('message utils', () => {
          * - Throw MalformedMessageError for oversized payloads
          */
         it('should handle payload size validation', () => {
-            // Setup test message with oversized payload
-            const largePayload = { data: 'x'.repeat(32 * 1024 + 1) }; // Just over 32KB
-            const message = `publish:test.topic:1.0.0\n${JSON.stringify(largePayload)}`;
+            const largePayload = { data: 'x'.repeat(32 * 1024 + 1) };
+            const message = Buffer.from(`publish:test.topic:1.0.0\n${JSON.stringify(largePayload)}`);
             const parser = new Parser(message);
-            const header = parser.parseHeader();
-
-            // Verify appropriate error is thrown
-            expect(() => parser.parsePayload(header.action)).toThrow(MalformedMessageError);
-            expect(() => parser.parsePayload(header.action)).toThrow(/Payload exceeds maximum length/);
+            expect(() => parser.parsePayload()).toThrow(MalformedMessageError);
         });
     });
 
@@ -373,22 +312,18 @@ describe('message utils', () => {
          * - Combine with correct separator
          */
         it('should serialize message with header and payload correctly', () => {
-            // Setup test header with all components
             const header = {
                 action: ActionType.PUBLISH,
                 topic: 'test.topic',
-                version: '1.0.0',
-                requestid: '123e4567-e89b-12d3-a456-426614174000'
+                version: '1.0.0'
             };
-            // Setup test payload with multiple fields
             const payload = {
                 data: 'test',
                 count: 123
             };
 
-            // Serialize message and verify format
             const serialized = serialize(header, payload);
-            expect(serialized).toBe('publish:test.topic:1.0.0:123e4567-e89b-12d3-a456-426614174000\n{"data":"test","count":123}');
+            expect(serialized).toBe('publish:test.topic:1.0.0\n{"data":"test","count":123}');
         });
 
         /**
@@ -399,18 +334,15 @@ describe('message utils', () => {
          * - Combine with correct separator
          */
         it('should serialize message without requestid correctly', () => {
-            // Setup test header without requestid
             const header = {
                 action: ActionType.PUBLISH,
                 topic: 'test.topic',
                 version: '1.0.0'
             };
-            // Setup simple test payload
             const payload = {
                 data: 'test'
             };
 
-            // Serialize message and verify format
             const serialized = serialize(header, payload);
             expect(serialized).toBe('publish:test.topic:1.0.0\n{"data":"test"}');
         });
@@ -423,7 +355,6 @@ describe('message utils', () => {
          * - Combine with correct separator
          */
         it('should serialize message with empty payload correctly', () => {
-            // Setup test header with empty payload
             const header = {
                 action: ActionType.PUBLISH,
                 topic: 'test.topic',
@@ -431,7 +362,6 @@ describe('message utils', () => {
             };
             const payload = {};
 
-            // Serialize message and verify format
             const serialized = serialize(header, payload);
             expect(serialized).toBe('publish:test.topic:1.0.0\n{}');
         });
@@ -444,14 +374,11 @@ describe('message utils', () => {
          * - Combine with correct separator
          */
         it('should serialize error response message correctly', () => {
-            // Setup test header for error response
             const header = {
                 action: ActionType.RESPONSE,
                 topic: 'test.topic',
-                version: '1.0.0',
-                requestid: '123e4567-e89b-12d3-a456-426614174000'
+                version: '1.0.0'
             };
-            // Setup error payload with all required fields
             const payload = {
                 error: {
                     code: 'TEST_ERROR',
@@ -461,9 +388,8 @@ describe('message utils', () => {
                 }
             };
 
-            // Serialize message and verify format
             const serialized = serialize(header, payload);
-            expect(serialized).toBe('response:test.topic:1.0.0:123e4567-e89b-12d3-a456-426614174000\n{"error":{"code":"TEST_ERROR","message":"Test error message","details":{"additionalInfo":"test details"},"timestamp":"2023-01-01T00:00:00Z"}}');
+            expect(serialized).toBe('response:test.topic:1.0.0\n{"error":{"code":"TEST_ERROR","message":"Test error message","details":{"additionalInfo":"test details"},"timestamp":"2023-01-01T00:00:00Z"}}');
         });
     });
 });

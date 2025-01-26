@@ -1,293 +1,234 @@
-import { EventEmitter } from 'events';
+import { jest } from '@jest/globals';
+import { MonitoringManager } from '@core/monitoring';
+import { GaugeSlot, RateSlot } from '@core/monitoring/metrics/slots';
 import { InternalError } from '@core/errors';
-import { MonitoringManager } from '@core/monitoring/manager';
-import { Metric, ParameterizedMetric } from '@core/monitoring/metrics';
-import { BaseSlot } from '@core/monitoring/metrics/slots/base';
+import logger from '@utils/logger';
 
-// Mock dependencies
-jest.mock('@core/monitoring/metrics');
-jest.mock('@core/monitoring/metrics');
-jest.mock('@utils/logger');
-
-/**
- * Mock slot for testing.
- * Implements only the minimum required interface for BaseSlot.
- * Used to verify metric behavior without testing actual slot implementations.
- */
-class MockSlot implements BaseSlot {
-    value = 0;
-    reset = jest.fn();
-    dispose = jest.fn();
-}
+// Mock logger
+jest.mock('@utils/logger', () => {
+    const mockLogger = {
+        info: jest.fn(),
+        error: jest.fn()
+    };
+    return {
+        __esModule: true,
+        default: mockLogger,
+        SetupLogger: jest.fn().mockReturnValue(mockLogger)
+    };
+});
 
 /**
- * Test suite for MonitoringManager.
- * Verifies the manager's core responsibilities:
- * - Creating and tracking regular metrics
- * - Creating and tracking parameterized metrics
- * - Looking up metrics by name
- * - Handling metric disposal and cleanup
- * - Managing the lifecycle of all metrics
+ * Test suite for MonitoringManager class.
+ * Tests the core functionality of the monitoring system.
+ *
+ * Key areas tested:
+ * - Metric registration and retrieval
+ * - Parameterized metrics
+ * - Error handling
+ * - Metric serialization
+ * - Cleanup and disposal
  */
 describe('MonitoringManager', () => {
     let manager: MonitoringManager;
-    let mockSlot: MockSlot;
-    const MockMetric = Metric as jest.MockedClass<typeof Metric>;
-    const MockParameterizedMetric = ParameterizedMetric as jest.MockedClass<typeof ParameterizedMetric>;
 
     beforeEach(() => {
-        jest.clearAllMocks();
-        mockSlot = new MockSlot();
-
-        // Setup mock for regular Metric class
-        // Creates a basic EventEmitter with name, slot, and dispose functionality
-        MockMetric.mockImplementation((name: string) => {
-            const instance = new EventEmitter() as Metric;
-            Object.defineProperty(instance, 'name', { get: () => name });
-            Object.defineProperty(instance, 'slot', { get: () => mockSlot });
-            instance.dispose = jest.fn().mockImplementation(() => instance.emit('dispose'));
-            return instance;
-        });
-        // Mock canonical name conversion (lowercase)
-        MockMetric.getCanonicalName = jest.fn(name => name.toLowerCase());
-
-        // Setup mock for ParameterizedMetric class
-        // Creates a basic EventEmitter with template and metric creation functionality
-        MockParameterizedMetric.mockImplementation((template: string) => {
-            const instance = new EventEmitter() as ParameterizedMetric;
-            Object.defineProperty(instance, 'template', { get: () => template });
-            instance.dispose = jest.fn().mockImplementation(() => instance.emit('dispose'));
-            // Mock getMetric to return a new metric instance with the mockSlot
-            instance.getMetric = jest.fn().mockImplementation((name: string) => {
-                const metric = new EventEmitter() as Metric;
-                Object.defineProperty(metric, 'name', { get: () => name });
-                Object.defineProperty(metric, 'slot', { get: () => mockSlot });
-                metric.dispose = jest.fn().mockImplementation(() => metric.emit('dispose'));
-                return metric;
-            });
-            return instance;
-        });
-        // Default to non-parameterized metrics
-        MockParameterizedMetric.isParameterized = jest.fn().mockReturnValue(false);
-        (MockParameterizedMetric.extract as jest.Mock).mockReturnValue(undefined);
-
-        // Create fresh manager for each test
+        jest.resetAllMocks();
         manager = new MonitoringManager();
     });
 
-    /**
-     * Tests for regular (non-parameterized) metric functionality.
-     * Verifies:
-     * - Basic metric creation and registration
-     * - Prevention of duplicate metrics
-     * - Prevention of direct parameterized metric creation
-     * - Proper cleanup on metric disposal
-     */
-    describe('regular metrics', () => {
-        /**
-         * Verifies that a regular metric can be created and tracked by the manager.
-         * The metric should be accessible via getMetric after creation.
-         */
-        it('should create and track a regular metric', () => {
-            // Create a basic metric
-            const metric = manager.registerMetric('test.metric', MockSlot);
-
-            // Verify the metric is tracked and accessible
-            expect(manager.getMetric('test.metric')).toBeDefined();
+    describe('registerMetric', () => {
+        it('should register a new metric', () => {
+            const metric = manager.registerMetric('system.cpu.usage', GaugeSlot);
+            expect(metric).toBeDefined();
+            expect(metric.name).toBe('system.cpu.usage');
+            expect(metric.slot).toBeInstanceOf(GaugeSlot);
         });
 
-        /**
-         * Verifies that attempting to create a duplicate metric throws an error.
-         * This ensures metric names remain unique within the manager.
-         */
-        it('should prevent duplicate metric creation', () => {
-            // Create the initial metric
-            manager.registerMetric('test.metric', MockSlot);
-
-            // Verify that creating another metric with the same name throws
+        it('should throw when registering duplicate metric', () => {
+            manager.registerMetric('system.cpu.usage', GaugeSlot);
             expect(() => {
-                manager.registerMetric('test.metric', MockSlot);
+                manager.registerMetric('system.cpu.usage', GaugeSlot);
             }).toThrow(InternalError);
         });
 
-        /**
-         * Verifies that attempting to create a parameterized metric directly through
-         * registerMetric throws an error. Parameterized metrics must be created through
-         * registerParameterized.
-         */
-        it('should prevent direct parameterized metric creation', () => {
-            // Setup mock to identify the name as parameterized
-            MockParameterizedMetric.isParameterized = jest.fn().mockReturnValue(true);
-
-            // Verify that attempting to create a parameterized metric directly throws
+        it('should throw when registering parameterized metric directly', () => {
             expect(() => {
-                manager.registerMetric('test.{param}.metric', MockSlot);
+                manager.registerMetric('system.cpu.{core}.usage', GaugeSlot);
             }).toThrow(InternalError);
         });
 
-        /**
-         * Verifies that when a metric is disposed, it is properly removed from the manager
-         * and can no longer be accessed.
-         */
         it('should remove metric when disposed', () => {
-            // Create a metric and trigger its disposal
-            const metric = manager.registerMetric('test.metric', MockSlot);
+            const metric = manager.registerMetric('system.cpu.usage', GaugeSlot);
             metric.dispose();
-
-            // Verify the metric is no longer accessible
-            expect(manager.getMetric('test.metric')).toBeUndefined();
+            expect(manager.getMetric('system.cpu.usage')).toBeUndefined();
         });
     });
 
-    /**
-     * Tests for parameterized metric functionality.
-     * Verifies:
-     * - Template creation and registration
-     * - Prevention of duplicate templates
-     * - Metric lookup by parameterized name
-     * - Proper cleanup on template disposal
-     */
-    describe('parameterized metrics', () => {
-        beforeEach(() => {
-            // Setup parameterized metric detection
-            // Identifies names containing {param} as parameterized
-            MockParameterizedMetric.isParameterized = jest.fn()
-                .mockImplementation(name => name.includes('{param}'));
+    describe('registerParameterized', () => {
+        it('should register a new parameterized metric', () => {
+            const metric = manager.registerParameterized('system.cpu.{core}.usage', GaugeSlot);
+            expect(metric).toBeDefined();
+            expect(metric.template).toBe('system.cpu.{core}.usage');
         });
 
-        /**
-         * Verifies that a parameterized metric template can be created and tracked.
-         * The template should be ready to create individual metrics.
-         */
-        it('should create and track a parameterized metric', () => {
-            // Create a parameterized metric template
-            const metric = manager.registerParameterized('test.{param}.metric', MockSlot);
-
-            // Verify the template was created successfully
-            expect(metric).toBeInstanceOf(EventEmitter);
-        });
-
-        /**
-         * Verifies that attempting to create a duplicate parameterized metric template
-         * throws an error. This ensures template names remain unique.
-         */
-        it('should prevent duplicate parameterized metric creation', () => {
-            // Create the initial template
-            manager.registerParameterized('test.{param}.metric', MockSlot);
-
-            // Verify that creating another template with the same pattern throws
+        it('should throw when registering duplicate parameterized metric', () => {
+            manager.registerParameterized('system.cpu.{core}.usage', GaugeSlot);
             expect(() => {
-                manager.registerParameterized('test.{param}.metric', MockSlot);
+                manager.registerParameterized('system.cpu.{core}.usage', GaugeSlot);
             }).toThrow(InternalError);
         });
 
-        /**
-         * Verifies that metrics can be looked up using their full parameterized name.
-         * The manager should find the correct template and return the appropriate metric.
-         */
-        it('should lookup parameterized metrics by full name', () => {
-            // Setup mocks for parameterized name handling
-            MockParameterizedMetric.isParameterized = jest.fn().mockReturnValue(true);
-            (MockParameterizedMetric.extract as jest.Mock).mockReturnValue('test.{param}.metric');
-
-            // Create the template and setup mock metric response
-            const parameterized = manager.registerParameterized('test.{param}.metric', MockSlot);
-            (parameterized.getMetric as jest.Mock).mockReturnValue({
-                name: 'test.{param:value}.metric',
-                slot: mockSlot
-            });
-
-            // Verify lookup with full parameterized name returns the correct slot
-            expect(manager.getMetric('test.{param:value}.metric')).toBe(mockSlot);
+        it('should create and track individual metrics', () => {
+            const metric = manager.registerParameterized('system.cpu.{core}.usage', GaugeSlot);
+            const instance = metric.registerMetric({ core: '0' });
+            expect(instance).toBeDefined();
+            instance.slot.set(42);
+            const retrievedMetric = manager.getMetric('system.cpu.{core:0}.usage');
+            expect(retrievedMetric).toBeDefined();
+            expect(retrievedMetric?.value).toBe(42);
         });
 
-        /**
-         * Verifies that looking up a metric with a parameterized name returns undefined
-         * if no matching template exists.
-         */
-        it('should return undefined when parameterized metric template not found', () => {
-            // Setup mocks for parameterized name handling
-            MockParameterizedMetric.isParameterized = jest.fn().mockReturnValue(true);
-            (MockParameterizedMetric.extract as jest.Mock).mockReturnValue('test.{param}.metric');
-
-            // Verify lookup returns undefined when no matching template exists
-            expect(manager.getMetric('test.{param:value}.metric')).toBeUndefined();
-        });
-
-        /**
-         * Verifies that when a parameterized metric template is disposed,
-         * all its metrics are properly cleaned up and can no longer be accessed.
-         */
-        it('should remove parameterized metric when disposed', () => {
-            // Create and dispose a parameterized metric template
-            const metric = manager.registerParameterized('test.{param}.metric', MockSlot);
+        it('should remove all metrics when disposed', () => {
+            const metric = manager.registerParameterized('system.cpu.{core}.usage', GaugeSlot);
+            const instance = metric.registerMetric({ core: '0' });
+            expect(instance).toBeDefined();
+            instance.slot.set(42);
+            const retrievedMetric = manager.getMetric('system.cpu.{core:0}.usage');
+            expect(retrievedMetric).toBeDefined();
+            expect(retrievedMetric?.value).toBe(42);
             metric.dispose();
-
-            // Verify metrics from this template can no longer be accessed
-            expect(manager.getMetric('test.{param:value}.metric')).toBeUndefined();
+            expect(manager.getMetric('system.cpu.{core:0}.usage')).toBeUndefined();
         });
     });
 
-    /**
-     * Tests for manager disposal functionality.
-     * Verifies that the manager properly cleans up all metrics when disposed.
-     */
-    describe('dispose', () => {
-        /**
-         * Verifies that disposing the manager:
-         * - Calls dispose on all regular metrics
-         * - Calls dispose on all parameterized metric templates
-         * - Makes all metrics inaccessible
-         */
-        it('should dispose all metrics', () => {
-            // Create both types of metrics
-            const regular = manager.registerMetric('test.metric', MockSlot);
-            const parameterized = manager.registerParameterized('test.{param}.metric', MockSlot);
+    describe('getMetric', () => {
+        it('should return undefined for non-existent metric', () => {
+            expect(manager.getMetric('system.cpu.usage')).toBeUndefined();
+        });
 
-            // Dispose the entire manager
-            manager.dispose();
+        it('should return metric slot for regular metric', () => {
+            const metric = manager.registerMetric('system.cpu.usage', GaugeSlot);
+            metric.slot.set(42);
+            const slot = manager.getMetric('system.cpu.usage');
+            expect(slot).toBeDefined();
+            expect(slot?.value).toBe(42);
+        });
 
-            // Verify all metrics were properly disposed
-            expect(regular.dispose).toHaveBeenCalled();
-            expect(parameterized.dispose).toHaveBeenCalled();
-            // Verify all metrics are now inaccessible
-            expect(manager.getMetric('test.metric')).toBeUndefined();
-            expect(manager.getMetric('test.{param:value}.metric')).toBeUndefined();
+        it('should return metric slot for parameterized metric', () => {
+            const metric = manager.registerParameterized('system.cpu.{core}.usage', GaugeSlot);
+            const instance = metric.registerMetric({ core: '0' });
+            expect(instance).toBeDefined();
+            instance.slot.set(42);
+            const retrievedMetric = manager.getMetric('system.cpu.{core:0}.usage');
+            expect(retrievedMetric).toBeDefined();
+            expect(retrievedMetric?.value).toBe(42);
         });
     });
 
     describe('serializeMetrics', () => {
-        it('should serialize both regular and parameterized metrics', () => {
-            // Setup mock values for different metrics
-            mockSlot.value = 42;
+        beforeEach(() => {
+            // Setup some test metrics
+            const cpuUsage = manager.registerMetric('system.cpu.usage', GaugeSlot);
+            cpuUsage.slot.set(75);
 
-            // Create a regular metric
-            manager.registerMetric('test.metric', MockSlot);
+            const memoryUsage = manager.registerMetric('system.memory.usage', GaugeSlot);
+            memoryUsage.slot.set(1024);
 
-            // Create a parameterized metric
-            MockParameterizedMetric.isParameterized = jest.fn()
-                .mockImplementation(name => name.includes('{param}'));
-            const paramMetric = manager.registerParameterized('test.{param}.metric', MockSlot);
+            const cpuCoreUsage = manager.registerParameterized('system.cpu.{core}.usage', GaugeSlot);
+            const core0 = cpuCoreUsage.registerMetric({ core: '0' });
+            const core1 = cpuCoreUsage.registerMetric({ core: '1' });
+            expect(core0).toBeDefined();
+            expect(core1).toBeDefined();
+            core0.slot.set(80);
+            core1.slot.set(60);
 
-            // Mock the parameterized metric to return some instances
-            const mockInstances = [
-                { name: 'test.param1.metric', slot: { value: 100 } },
-                { name: 'test.param2.metric', slot: { value: 200 } }
-            ];
-            Object.defineProperty(paramMetric, 'allMetrics', { get: () => mockInstances });
+            const networkRate = manager.registerParameterized('system.network.{interface}.rate', RateSlot);
+            const eth0 = networkRate.registerMetric({ interface: 'eth0' });
+            const wlan0 = networkRate.registerMetric({ interface: 'wlan0' });
+            expect(eth0).toBeDefined();
+            expect(wlan0).toBeDefined();
+            eth0.slot.add(100);
+            wlan0.slot.add(50);
+        });
 
-            // Serialize and verify
-            const serialized = manager.serializeMetrics();
-            expect(serialized).toEqual({
-                'test.metric': 42,
-                'test.param1.metric': 100,
-                'test.param2.metric': 200
+        it('should serialize metrics with values only', async () => {
+            // Wait for rate interval to complete
+            await new Promise(resolve => setTimeout(resolve, 1100));
+            const metrics = manager.serializeMetrics(false);
+            expect(metrics).toEqual({
+                'system.cpu.usage': 75,
+                'system.memory.usage': 1024,
+                'system.cpu.{core:0}.usage': 80,
+                'system.cpu.{core:1}.usage': 60,
+                'system.network.{interface:eth0}.rate': 100,
+                'system.network.{interface:wlan0}.rate': 50
             });
         });
 
-        it('should handle empty metrics', () => {
-            const serialized = manager.serializeMetrics();
-            expect(serialized).toEqual({});
+        it('should serialize metrics with full info', async () => {
+            // Wait for rate interval to complete
+            await new Promise(resolve => setTimeout(resolve, 1100));
+            const metrics = manager.serializeMetrics(true);
+            expect(metrics).toMatchObject({
+                'system.cpu.usage': {
+                    name: 'system.cpu.usage',
+                    type: 'gauge',
+                    value: 75
+                },
+                'system.memory.usage': {
+                    name: 'system.memory.usage',
+                    type: 'gauge',
+                    value: 1024
+                },
+                'system.cpu.{core:0}.usage': {
+                    name: 'system.cpu.{core:0}.usage',
+                    type: 'gauge',
+                    value: 80
+                },
+                'system.cpu.{core:1}.usage': {
+                    name: 'system.cpu.{core:1}.usage',
+                    type: 'gauge',
+                    value: 60
+                },
+                'system.network.{interface:eth0}.rate': {
+                    name: 'system.network.{interface:eth0}.rate',
+                    type: 'rate',
+                    value: 100
+                },
+                'system.network.{interface:wlan0}.rate': {
+                    name: 'system.network.{interface:wlan0}.rate',
+                    type: 'rate',
+                    value: 50
+                }
+            });
+        });
+
+        it('should filter parameterized metrics', async () => {
+            // Wait for rate interval to complete
+            await new Promise(resolve => setTimeout(resolve, 1100));
+            const metrics = manager.serializeMetrics(false, { interface: 'eth0' });
+            expect(metrics).toEqual({
+                'system.network.{interface:eth0}.rate': 100
+            });
+        });
+    });
+
+    describe('dispose', () => {
+        it('should dispose all metrics', () => {
+            // Setup some test metrics
+            const cpuUsage = manager.registerMetric('system.cpu.usage', GaugeSlot);
+            const cpuCoreUsage = manager.registerParameterized('system.cpu.{core}.usage', GaugeSlot);
+            cpuCoreUsage.registerMetric({ core: '0' });
+
+            // Dispose all metrics
+            manager.dispose();
+
+            // Verify metrics were cleared
+            expect(manager.getMetric('system.cpu.usage')).toBeUndefined();
+            expect(manager.getMetric('system.cpu.{core:0}.usage')).toBeUndefined();
+
+            // Verify logging
+            expect(logger.info).toHaveBeenCalledWith('Cleared all metrics');
         });
     });
 });

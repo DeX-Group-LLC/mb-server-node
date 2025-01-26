@@ -94,7 +94,7 @@ export class MonitoringManager {
         // Check if this is a parameterized metric
         if (ParameterizedMetric.isParameterized(canonicalName)) {
             const extracted = ParameterizedMetric.extract(canonicalName);
-            return this.parameterizedMetrics.get(extracted.template)?.getMetric(canonicalName)?.slot;
+            return this.parameterizedMetrics.get(extracted.template)?.getMetric(extracted.params)?.slot;
         }
 
         // Otherwise, return the metric

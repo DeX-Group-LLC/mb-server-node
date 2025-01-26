@@ -8,7 +8,19 @@ import { InternalError } from '@core/errors';
 import logger from '@utils/logger';
 
 jest.mock('ws');
-jest.mock('@utils/logger');
+jest.mock('@utils/logger', () => {
+    const mockLogger = {
+        info: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        debug: jest.fn()
+    };
+    return {
+        __esModule: true,
+        default: mockLogger,
+        SetupLogger: jest.fn().mockReturnValue(mockLogger)
+    };
+});
 
 // Mock config before imports
 jest.mock('@config', () => ({
@@ -361,7 +373,7 @@ describe('WebSocket Implementation', () => {
 
                 // Verify listener was registered and received message
                 expect(mockWs.on).toHaveBeenCalledWith('message', expect.any(Function));
-                expect(listener).toHaveBeenCalledWith(testMessage);
+                expect(listener).toHaveBeenCalledWith(Buffer.from(testMessage));
             });
         });
 

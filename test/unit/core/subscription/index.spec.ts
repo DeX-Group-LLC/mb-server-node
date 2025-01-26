@@ -1,8 +1,20 @@
 import { SubscriptionManager } from '@core/subscription';
-import logger from '@utils/logger';
+import logger, { SetupLogger } from '@utils/logger';
 
-// Mock only logger to isolate SubscriptionManager tests
-jest.mock('@utils/logger');
+// Mock logger module to isolate SubscriptionManager tests
+jest.mock('@utils/logger', () => {
+    const mockLogger = {
+        info: jest.fn(),
+        warn: jest.fn(),
+        debug: jest.fn(),
+        error: jest.fn()
+    };
+    return {
+        __esModule: true,
+        default: mockLogger,
+        SetupLogger: jest.fn(() => mockLogger)
+    };
+});
 
 describe('SubscriptionManager', () => {
     let subscriptionManager: SubscriptionManager;
@@ -18,6 +30,27 @@ describe('SubscriptionManager', () => {
     afterEach(() => {
         // Clean up subscriptions after each test to ensure isolation
         subscriptionManager.dispose();
+    });
+
+    describe('isSubscribed', () => {
+        it('should return true if service is subscribed to topic', () => {
+            subscriptionManager.subscribe('service1', 'test.topic');
+            expect(subscriptionManager.isSubscribed('service1', 'test.topic')).toBe(true);
+        });
+
+        it('should return false if service is not subscribed to topic', () => {
+            subscriptionManager.subscribe('service2', 'test.topic');
+            expect(subscriptionManager.isSubscribed('service1', 'test.topic')).toBe(false);
+        });
+
+        it('should return false if topic does not exist', () => {
+            expect(subscriptionManager.isSubscribed('service1', 'nonexistent.topic')).toBe(false);
+        });
+
+        it('should handle canonical topic names', () => {
+            subscriptionManager.subscribe('service1', 'Test.Topic');
+            expect(subscriptionManager.isSubscribed('service1', 'test.topic')).toBe(true);
+        });
     });
 
     describe('subscribe', () => {
@@ -130,6 +163,28 @@ describe('SubscriptionManager', () => {
 
             const subscribers = subscriptionManager.getSubscribers('baggage.events');
             expect(subscribers).toEqual(['service2', 'service1', 'service3']); // Priority first, then FIFO
+        });
+
+        it('should update priority and reorder when service resubscribes with different priority', () => {
+            // Initial subscription with lower priority
+            subscriptionManager.subscribe('service1', 'test.topic', 1);
+            subscriptionManager.subscribe('service2', 'test.topic', 1);
+
+            // Update service1's priority to higher
+            const result = subscriptionManager.subscribe('service1', 'test.topic', 2);
+
+            expect(result).toBe(true);
+            expect(logger.debug).toHaveBeenCalledWith(
+                'Service service1 is already subscribed to topic: test.topic with priority: 1, updating to 2'
+            );
+
+            // Get subscribers to verify order
+            const subscribers = subscriptionManager.getSubscribers('test.topic');
+            expect(subscribers).toEqual(['service1', 'service2']);
+
+            // Verify the priorities through getSubscribedInfo
+            const info = subscriptionManager.getSubscribedInfo('service1');
+            expect(info).toEqual([{ topic: 'test.topic', priority: 2 }]);
         });
     });
 
@@ -356,6 +411,73 @@ describe('SubscriptionManager', () => {
 
             const topics = subscriptionManager.getAllSubscribedTopics();
             expect(topics).toEqual(['alpha.updates', 'baggage.events', 'zebra.events']); // Unique and alphabetical
+        });
+    });
+
+    describe('getSubscribedInfo', () => {
+        it('should return empty array for service with no subscriptions', () => {
+            expect(subscriptionManager.getSubscribedInfo('service1')).toEqual([]);
+        });
+
+        it('should return topic and priority information for all subscribed topics', () => {
+            subscriptionManager.subscribe('service1', 'topic1', 2);
+            subscriptionManager.subscribe('service1', 'topic2', 1);
+            subscriptionManager.subscribe('service2', 'topic3', 3); // Different service
+
+            const info = subscriptionManager.getSubscribedInfo('service1');
+            expect(info).toEqual([
+                { topic: 'topic1', priority: 2 },
+                { topic: 'topic2', priority: 1 }
+            ]);
+        });
+
+        it('should return topics in alphabetical order', () => {
+            subscriptionManager.subscribe('service1', 'zebra.topic', 1);
+            subscriptionManager.subscribe('service1', 'alpha.topic', 2);
+            subscriptionManager.subscribe('service1', 'beta.topic', 3);
+
+            const info = subscriptionManager.getSubscribedInfo('service1');
+            expect(info).toEqual([
+                { topic: 'alpha.topic', priority: 2 },
+                { topic: 'beta.topic', priority: 3 },
+                { topic: 'zebra.topic', priority: 1 }
+            ]);
+        });
+    });
+
+    describe('getAllSubscribedTopicWithSubscribers', () => {
+        it('should return empty object when no subscriptions exist', () => {
+            expect(subscriptionManager.getAllSubscribedTopicWithSubscribers()).toEqual({});
+        });
+
+        it('should return all topics with their complete subscriber information', () => {
+            subscriptionManager.subscribe('service1', 'topic1', 2);
+            subscriptionManager.subscribe('service2', 'topic1', 1);
+            subscriptionManager.subscribe('service3', 'topic2', 3);
+
+            const result = subscriptionManager.getAllSubscribedTopicWithSubscribers();
+            expect(result).toEqual({
+                'topic1': [
+                    { serviceId: 'service1', priority: 2 },
+                    { serviceId: 'service2', priority: 1 }
+                ],
+                'topic2': [
+                    { serviceId: 'service3', priority: 3 }
+                ]
+            });
+        });
+
+        it('should maintain priority order in subscriber arrays', () => {
+            subscriptionManager.subscribe('service1', 'topic1', 1);
+            subscriptionManager.subscribe('service2', 'topic1', 3);
+            subscriptionManager.subscribe('service3', 'topic1', 2);
+
+            const result = subscriptionManager.getAllSubscribedTopicWithSubscribers();
+            expect(result['topic1']).toEqual([
+                { serviceId: 'service2', priority: 3 },
+                { serviceId: 'service3', priority: 2 },
+                { serviceId: 'service1', priority: 1 }
+            ]);
         });
     });
 

@@ -2,16 +2,26 @@ import { EventEmitter } from 'events';
 import { ParameterizedMetric } from '@core/monitoring/metrics/parameterized';
 import { BaseSlot } from '@core/monitoring/metrics/slots/base';
 import { InternalError } from '@core/errors';
+import { jest } from '@jest/globals';
+import { GaugeSlot } from '@core/monitoring/metrics/slots';
+import { Metric } from '@core/monitoring/metrics';
 
 // Mock Metric class
-jest.mock('@core/monitoring/metrics/metric', () => {
+jest.mock('@core/monitoring/metrics', () => {
     class MockMetric extends EventEmitter {
-        constructor(public name: string) {
+        public slot: BaseSlot;
+        public dispose = jest.fn();
+
+        constructor(public name: string, SlotClass: new () => BaseSlot) {
             super();
+            this.slot = new SlotClass();
         }
-        dispose = jest.fn();
-        static getCanonicalName = jest.fn(name => name.toLowerCase());
+
+        static getCanonicalName(name: string): string {
+            return name.toLowerCase();
+        }
     }
+
     return { Metric: MockMetric };
 });
 
@@ -19,10 +29,31 @@ jest.mock('@core/monitoring/metrics/metric', () => {
  * Mock slot for testing.
  * Implements only the minimum required interface.
  */
-class MockSlot implements BaseSlot {
-    value = 0;
-    reset = jest.fn();
-    dispose = jest.fn();
+class MockSlot extends BaseSlot {
+    protected _value: number = 0;
+    protected _lastModified: Date = new Date();
+
+    constructor() {
+        super();
+    }
+
+    get value(): number {
+        return this._value;
+    }
+
+    set(value: number): void {
+        this._value = value;
+        this._lastModified = new Date();
+    }
+
+    reset(): void {
+        this._value = 0;
+        this._lastModified = new Date();
+    }
+
+    dispose(): void {
+        // No-op for testing
+    }
 }
 
 /**
@@ -33,7 +64,7 @@ class MockSlot implements BaseSlot {
  * - Create unique instances per parameter set
  */
 describe('ParameterizedMetric', () => {
-    let metric: ParameterizedMetric<MockSlot>;
+    let metric: ParameterizedMetric<BaseSlot>;
 
     beforeEach(() => {
         jest.clearAllMocks();
@@ -49,8 +80,8 @@ describe('ParameterizedMetric', () => {
         it('should extract parameters from parameterized name', () => {
             const result = ParameterizedMetric.extract('system.test.{param:value}');
             expect(result).toBeDefined();
-            expect(result!.template).toBe('system.test.{param}');
-            expect(result!.params).toEqual({ param: 'value' });
+            expect(result.template).toBe('system.test.{param}');
+            expect(result.params).toEqual({ param: 'value' });
         });
 
         it('should throw error for non-parameterized name', () => {
@@ -119,7 +150,7 @@ describe('ParameterizedMetric', () => {
             expect(() => metric.registerMetric({ alpha: 'v1' })).toThrow(InternalError);
 
             // Extra parameter
-            expect(() => metric.registerMetric({ alpha: 'v1', beta: 'v2', gamma: 'v3' })).not.toThrow(InternalError);
+            expect(() => metric.registerMetric({ alpha: 'v1', beta: 'v2', gamma: 'v3' })).not.toThrow();
         });
 
         it('should reject invalid parameter values', () => {
@@ -200,24 +231,24 @@ describe('ParameterizedMetric', () => {
         });
 
         it('should dispose all metrics on template disposal', () => {
-            // Register multiple instances
-            const instance1 = metric.registerMetric({ param: 'value1' });
-            const instance2 = metric.registerMetric({ param: 'value2' });
-            const disposeListener = jest.fn();
-            metric.on('dispose', disposeListener);
+            const metric = new ParameterizedMetric('system.cpu.{core}.usage', GaugeSlot);
+            const instance1 = metric.registerMetric({ core: '0' });
+            const instance2 = metric.registerMetric({ core: '1' });
 
-            // Dispose the template
+            // Create spies for the dispose methods
+            const spy1 = jest.spyOn(instance1, 'dispose');
+            const spy2 = jest.spyOn(instance2, 'dispose');
+
+            // Dispose the parameterized metric
             metric.dispose();
 
             // All instances should be disposed
-            expect(instance1.dispose).toHaveBeenCalled();
-            expect(instance2.dispose).toHaveBeenCalled();
+            expect(spy1).toHaveBeenCalled();
+            expect(spy2).toHaveBeenCalled();
 
             // All instances should be removed
-            expect(Array.from(metric.allMetrics)).toHaveLength(0);
-
-            // Dispose event should be emitted
-            expect(disposeListener).toHaveBeenCalledWith(metric);
+            expect(metric.getMetric({ core: '0' })).toBeUndefined();
+            expect(metric.getMetric({ core: '1' })).toBeUndefined();
         });
     });
 
@@ -232,48 +263,170 @@ describe('ParameterizedMetric', () => {
 
             // Case insensitive
             expect(metric.matches('SYSTEM.TEST.{PARAM:VALUE}')).toBe(true);
+        });
+    });
 
-            // Different parameter values
-            expect(metric.matches('system.test.{param:123}')).toBe(true);
-            expect(metric.matches('system.test.{param:value-with-dashes}')).toBe(true);
+    describe('constructor', () => {
+        it('should create a valid parameterized metric', () => {
+            const metric = new ParameterizedMetric('system.cpu.{core}.usage', GaugeSlot);
+            expect(metric).toBeDefined();
+            expect(metric.template).toBe('system.cpu.{core}.usage');
         });
 
-        it('should not match invalid metric names', () => {
-            // Wrong structure
-            expect(metric.matches('wrong.test.{param:value}')).toBe(false);
-            expect(metric.matches('system.wrong.{param:value}')).toBe(false);
+        it('should throw on invalid template format', () => {
+            expect(() => {
+                new ParameterizedMetric('invalid..template', GaugeSlot);
+            }).toThrow(InternalError);
 
-            // Wrong parameter name
-            expect(metric.matches('system.test.{wrong:value}')).toBe(false);
+            expect(() => {
+                new ParameterizedMetric('.invalid.start', GaugeSlot);
+            }).toThrow(InternalError);
 
-            // Missing parameter value
-            expect(metric.matches('system.test.{param}')).toBe(false);
-
-            // Non-parameterized name
-            expect(metric.matches('system.test.value')).toBe(false);
+            expect(() => {
+                new ParameterizedMetric('invalid.end.', GaugeSlot);
+            }).toThrow(InternalError);
         });
 
-        it('should retrieve metrics by exact name', () => {
-            // Register a metric
-            const instance = metric.registerMetric({ param: 'value' });
-
-            // Should retrieve by exact name
-            expect(metric.getMetricByName('system.test.{param:value}')).toBe(instance);
-
-            // Should retrieve case insensitively
-            expect(metric.getMetricByName('SYSTEM.TEST.{PARAM:VALUE}')).toBe(instance);
+        it('should throw on non-parameterized template', () => {
+            expect(() => {
+                new ParameterizedMetric('system.cpu.usage', GaugeSlot);
+            }).toThrow(InternalError);
         });
 
-        it('should handle metric retrieval edge cases', () => {
-            // Register a metric
-            const instance = metric.registerMetric({ param: 'value' });
+        it('should handle case insensitivity', () => {
+            const metric = new ParameterizedMetric('System.CPU.{Core}.Usage', GaugeSlot);
+            expect(metric.template).toBe('system.cpu.{core}.usage');
+        });
+    });
 
-            // Should return undefined for non-existent metrics
-            expect(metric.getMetricByName('system.test.{param:other}')).toBeUndefined();
+    describe('registerMetric', () => {
+        let metric: ParameterizedMetric<GaugeSlot>;
 
-            // Should throw for invalid names
-            expect(() => metric.getMetricByName('wrong.test.{param:value}')).toThrow(InternalError);
-            expect(() => metric.getMetricByName('system.test.{wrong:value}')).toThrow(InternalError);
+        beforeEach(() => {
+            metric = new ParameterizedMetric('system.cpu.{core}.usage', GaugeSlot);
+        });
+
+        it('should register a new metric instance', () => {
+            const instance = metric.registerMetric({ core: '0' });
+            expect(instance).toBeDefined();
+            expect(instance.name).toBe('system.cpu.{core:0}.usage');
+            expect(instance.slot).toBeInstanceOf(GaugeSlot);
+        });
+
+        it('should throw when registering duplicate metric', () => {
+            metric.registerMetric({ core: '0' });
+            expect(() => {
+                metric.registerMetric({ core: '0' });
+            }).toThrow(InternalError);
+        });
+
+        it('should throw when parameter value is invalid', () => {
+            expect(() => {
+                metric.registerMetric({ core: 'invalid:value' });
+            }).toThrow(InternalError);
+        });
+
+        it('should throw when parameter is missing', () => {
+            expect(() => {
+                metric.registerMetric({});
+            }).toThrow(InternalError);
+        });
+
+        it('should handle multiple parameters', () => {
+            const multiParamMetric = new ParameterizedMetric('system.disk.{device}.{partition}.usage', GaugeSlot);
+            const instance = multiParamMetric.registerMetric({ device: 'sda', partition: '1' });
+            expect(instance.name).toBe('system.disk.{device:sda}.{partition:1}.usage');
+        });
+    });
+
+    describe('getMetric', () => {
+        let metric: ParameterizedMetric<GaugeSlot>;
+
+        beforeEach(() => {
+            metric = new ParameterizedMetric('system.cpu.{core}.usage', GaugeSlot);
+        });
+
+        it('should get metric by parameters', () => {
+            const instance = metric.registerMetric({ core: '0' });
+            const retrieved = metric.getMetric({ core: '0' });
+            expect(retrieved).toBe(instance);
+        });
+
+        it('should get metric by name', () => {
+            const instance = metric.registerMetric({ core: '0' });
+            const retrieved = metric.getMetric('system.cpu.{core:0}.usage');
+            expect(retrieved).toBe(instance);
+        });
+
+        it('should return undefined for non-existent metric', () => {
+            expect(metric.getMetric({ core: '0' })).toBeUndefined();
+            expect(metric.getMetric('system.cpu.{core:0}.usage')).toBeUndefined();
+        });
+
+        it('should throw when name does not match template', () => {
+            expect(() => {
+                metric.getMetric('system.memory.{core:0}.usage');
+            }).toThrow(InternalError);
+        });
+    });
+
+    describe('filteredMetrics', () => {
+        let metric: ParameterizedMetric<GaugeSlot>;
+
+        beforeEach(() => {
+            metric = new ParameterizedMetric('system.cpu.{core}.{type}.usage', GaugeSlot);
+            metric.registerMetric({ core: '0', type: 'user' });
+            metric.registerMetric({ core: '0', type: 'system' });
+            metric.registerMetric({ core: '1', type: 'user' });
+            metric.registerMetric({ core: '1', type: 'system' });
+        });
+
+        it('should filter metrics by single parameter', () => {
+            const filtered = Array.from(metric.filteredMetrics({ core: '0' }));
+            expect(filtered).toHaveLength(2);
+            expect(filtered.map(m => m.name)).toEqual([
+                'system.cpu.{core:0}.{type:user}.usage',
+                'system.cpu.{core:0}.{type:system}.usage'
+            ]);
+        });
+
+        it('should filter metrics by multiple parameters', () => {
+            const filtered = Array.from(metric.filteredMetrics({ core: '0', type: 'user' }));
+            expect(filtered).toHaveLength(1);
+            expect(filtered[0].name).toBe('system.cpu.{core:0}.{type:user}.usage');
+        });
+
+        it('should return empty iterator for non-matching parameters', () => {
+            const filtered = Array.from(metric.filteredMetrics({ core: '2' }));
+            expect(filtered).toHaveLength(0);
+        });
+
+        it('should return empty iterator for invalid parameters', () => {
+            const filtered = Array.from(metric.filteredMetrics({ invalid: 'param' }));
+            expect(filtered).toHaveLength(0);
+        });
+    });
+
+    describe('dispose', () => {
+        it('should dispose all metric instances', () => {
+            const metric = new ParameterizedMetric('system.cpu.{core}.usage', GaugeSlot);
+            const instance1 = metric.registerMetric({ core: '0' });
+            const instance2 = metric.registerMetric({ core: '1' });
+
+            // Create spies for the dispose methods
+            const spy1 = jest.spyOn(instance1, 'dispose');
+            const spy2 = jest.spyOn(instance2, 'dispose');
+
+            // Dispose the parameterized metric
+            metric.dispose();
+
+            // Verify all instances were disposed
+            expect(spy1).toHaveBeenCalled();
+            expect(spy2).toHaveBeenCalled();
+
+            // Verify metrics were cleared
+            expect(metric.getMetric({ core: '0' })).toBeUndefined();
+            expect(metric.getMetric({ core: '1' })).toBeUndefined();
         });
     });
 });

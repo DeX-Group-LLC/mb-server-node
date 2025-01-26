@@ -37,7 +37,7 @@ export class SubscriptionManager {
         }
 
         let i = 0;
-        let index = subscribers.length; // Initialize index to the end of the array
+        let index = -1; // Initialize index to -1, which means position to insert not found (push to the end)
         // Iterate while priority is greater OR equal and check for existing subscription
         while (i < subscribers.length) {
             if (subscribers[i].serviceId === serviceId) {
@@ -50,12 +50,16 @@ export class SubscriptionManager {
                     continue;
                 }
             }
-            if (index === subscribers.length && subscribers[i].priority < priority) {
+            if (index < 0 && subscribers[i].priority < priority) {
                 index = i;
             }
             i++;
         }
-        subscribers.splice(index, 0, { serviceId, priority });
+        if (index < 0) {
+            subscribers.push({ serviceId, priority });
+        } else {
+            subscribers.splice(index, 0, { serviceId, priority });
+        }
 
         logger.info(`Service subscribed to topic:${canonicalTopic} with priority:${priority}`, { serviceId, topic: canonicalTopic, priority });
         return true;

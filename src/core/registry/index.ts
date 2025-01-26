@@ -250,7 +250,7 @@ export class ServiceRegistry {
                     throw new TopicNotSupportedError(`Unknown system message topic: ${message.header.topic}`);
             }
         } catch (error) {
-            logger.error(`Error handling system message ${message.header.action}:${message.header.topic}:${message.header.version}:${message.header.requestId ? ':' +message.header.requestId : ''}:`, { serviceId, error });
+            logger.error(`Error handling system message ${message.header.action}:${message.header.topic}:${message.header.version}${message.header.requestId ? ':' +message.header.requestId : ''}`, { serviceId, error });
             this.metrics.serviceErrorRate.getMetric({ serviceId })?.slot.add(1);
             throw error;
         }
