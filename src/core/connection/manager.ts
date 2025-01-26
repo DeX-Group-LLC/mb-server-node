@@ -184,9 +184,7 @@ export class ConnectionManager {
                 const msg = MessageUtils.serialize(subHeader, { timestamp: new Date().toISOString(), timeout: parser.header.timeout ?? config.request.response.timeout.default, from: connection.serviceId, message } as any as ClientMessageAudit).replace('"payload":{}', `"payload":${parser!.rawPayload.toString('utf-8')}`);
                 // Forward the message to all subscribers
                 for (const subscriber of subscribers) {
-                    const connection = this._resolveConnection(subscriber);
-                    if (!connection) continue;
-                    connection.send(msg);
+                    this._resolveConnection(subscriber)!.send(msg);
                 }
             }
 
@@ -200,16 +198,10 @@ export class ConnectionManager {
                 logger.error(`[${error.code}] ${error.message}`, { serviceId: connection.serviceId, error });
                 this.sendMessage(connection.serviceId, header, { error: error.toJSON() }, undefined);
             } else if (error instanceof Error) {
-                if (header == ERROR_HEADER) {
-                    // If the header is null, the message is malformed
-                    logger.error('Unexpected error while parsing message header:', { serviceId: connection.serviceId, error });
-                    this.sendMessage(connection.serviceId, header, { error: new MalformedMessageError('Unexpected error while parsing message header').toJSON() }, undefined);
-                } else {
-                    // If the error is not a MessageError and the header and payload are not null, then the error is during routing
-                    // Send an internal error message to the client
-                    logger.error('An unexpected error while routing the message:', { serviceId: connection.serviceId, error });
-                    this.sendMessage(connection.serviceId, header, { error: new InternalError('An unexpected error while routing the message').toJSON() }, undefined);
-                }
+                // If the error is not a MessageError and the header and payload are not null, then the error is during routing
+                // Send an internal error message to the client
+                logger.error('An unexpected error while routing the message:', { serviceId: connection.serviceId, error });
+                this.sendMessage(connection.serviceId, header, { error: new InternalError('An unexpected error while routing the message').toJSON() }, undefined);
             }
         }
     }
