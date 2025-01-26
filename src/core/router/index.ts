@@ -194,20 +194,9 @@ export class MessageRouter {
             throw new NoRouteFoundError(`No subscribers for topic ${topic}`);
         }
 
-        // Check if the number of outstanding requests has reached the limit
-        if (this.requests.size >= config.max.outstanding.requests) {
-            logger.warn(`Maximum number of outstanding requests reached (${config.max.outstanding.requests})`);
-            const responseHeader = MessageUtils.toBrokerHeader(parser.header, ActionType.RESPONSE, parser.header.requestId);
-            const responsePayload = { error: new ServiceUnavailableError('Maximum number of outstanding requests reached').toJSON() };
-            this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload, undefined);
-            this.metrics.requestCountDropped.slot.add(1);
-            this.metrics.requestRateDropped.slot.add(1);
-            return false;
-        }
-
         // Pick a subscriber based on priority. If there are multiple subscribers with the same
         // highest priority, randomly select one.
-        const targetServiceId = subscribers.length > 1 ? subscribers[Math.floor(Math.random() * subscribers.length)] : subscribers[0];
+        const targetServiceId = subscribers[Math.floor(Math.random() * subscribers.length)];
 
         // Create the request object
         const request = this.generateRequest(serviceId, targetServiceId, parser.header);
@@ -356,7 +345,7 @@ export class MessageRouter {
      */
     private removeRequest(targetServiceId: string, targetRequestId: string): boolean {
         const request = this.getRequest(targetServiceId, targetRequestId);
-        if (request?.timeout) clearTimeout(request.timeout);
+        clearTimeout(request?.timeout);
         return this.requests.delete(`${targetServiceId}:${targetRequestId}`);
     }
 
