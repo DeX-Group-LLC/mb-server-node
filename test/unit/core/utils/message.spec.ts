@@ -2,7 +2,10 @@ import { MalformedMessageError, MessageError } from '@core/errors';
 import { ActionType } from '@core/types';
 import { Parser, serialize, prettySize, toBrokerHeader, serializePayload } from '@core/utils/message';
 
-// Mock config before imports
+/**
+ * Mock configuration for message tests
+ * Sets up maximum payload length and timeout values
+ */
 jest.mock('@config', () => ({
     config: {
         message: {
@@ -24,91 +27,65 @@ jest.mock('@config', () => ({
  * Test suite for message utility functions.
  * Tests the core functionality of message parsing, serialization, and formatting.
  *
- * Key areas tested:
- * - Message size formatting
- * - Message parsing and validation
- * - Message serialization
- * - Error handling for malformed messages
+ * @module MessageUtils
+ * @category Tests
  */
 describe('message utils', () => {
     /**
      * Tests for size formatting functionality.
-     * Verifies the prettySize function properly formats:
-     * - Byte values
-     * - Kilobyte values
-     * - Megabyte values
-     * - Gigabyte values
+     * Verifies the prettySize function properly formats file sizes.
+     *
+     * @group Formatting
      */
     describe('prettySize', () => {
         /**
-         * Verifies that byte values are formatted correctly.
-         * The function should:
-         * - Format values under 1KB
-         * - Append 'B' suffix
+         * Tests byte value formatting.
+         * Values under 1KB should be formatted with 'B' suffix.
          */
         it('should format bytes correctly', () => {
-            // Test formatting of byte-sized value
             expect(prettySize(500)).toBe('500B');
         });
 
         /**
-         * Verifies that kilobyte values are formatted correctly.
-         * The function should:
-         * - Convert bytes to kilobytes
-         * - Format with proper precision
-         * - Append 'KB' suffix
+         * Tests kilobyte value formatting.
+         * Values between 1KB and 1MB should be formatted with 'KB' suffix.
          */
         it('should format kilobytes correctly', () => {
-            // Test formatting of kilobyte-sized value
             expect(prettySize(1500)).toBe('1.46484375KB');
         });
 
         /**
-         * Verifies that megabyte values are formatted correctly.
-         * The function should:
-         * - Convert bytes to megabytes
-         * - Format with proper precision
-         * - Append 'MB' suffix
+         * Tests megabyte value formatting.
+         * Values between 1MB and 1GB should be formatted with 'MB' suffix.
          */
         it('should format megabytes correctly', () => {
-            // Test formatting of megabyte-sized value
             expect(prettySize(1500000)).toBe('1.430511474609375MB');
         });
 
         /**
-         * Verifies that gigabyte values are formatted correctly.
-         * The function should:
-         * - Convert bytes to gigabytes
-         * - Format with proper precision
-         * - Append 'GB' suffix
+         * Tests gigabyte value formatting.
+         * Values over 1GB should be formatted with 'GB' suffix.
          */
         it('should format gigabytes correctly', () => {
-            // Test formatting of gigabyte-sized value
             expect(prettySize(1500000000)).toBe('1.3969838619232178GB');
         });
     });
 
     /**
      * Tests for message parsing functionality.
-     * Verifies the Parser class properly handles:
-     * - Valid message formats with and without request IDs
-     * - Message header validation
-     * - Message payload validation
-     * - Various error conditions and malformed messages
+     * Verifies the Parser class properly handles message parsing and validation.
+     *
+     * @group Parsing
      */
     describe('Parser', () => {
         /**
-         * Verifies that valid messages with request IDs are parsed correctly.
-         * The parser should:
-         * - Parse the header components (action, topic, version, requestid)
-         * - Parse the JSON payload
-         * - Return correctly structured objects
+         * Tests basic message parsing with a valid message containing a request ID.
+         * Verifies header components and payload are correctly parsed.
          */
         it('should parse valid message correctly', () => {
             const validMessageWithRequestId = Buffer.from('publish:test.topic:1.0.0:123e4567-e89b-12d3-a456-426614174000\n{"data":"test"}');
             const parser = new Parser(validMessageWithRequestId);
 
-            // Access header property instead of calling private parseHeader
             expect(parser.header).toEqual({
                 action: ActionType.PUBLISH,
                 topic: 'test.topic',
@@ -116,16 +93,12 @@ describe('message utils', () => {
                 requestId: '123e4567-e89b-12d3-a456-426614174000'
             });
 
-            // Use public property for payload
             expect(JSON.parse(parser.rawPayload.toString())).toEqual({ data: 'test' });
         });
 
         /**
-         * Verifies that valid messages without request IDs are parsed correctly.
-         * The parser should:
-         * - Parse the header components (action, topic, version)
-         * - Handle missing requestid gracefully
-         * - Parse the JSON payload
+         * Tests message parsing without a request ID.
+         * Verifies header components and payload are correctly parsed when requestId is omitted.
          */
         it('should parse message without requestid correctly', () => {
             const validMessageWithoutRequestId = Buffer.from('publish:test.topic:1.0.0\n{"data":"test"}');
@@ -142,10 +115,8 @@ describe('message utils', () => {
         });
 
         /**
-         * Verifies that messages without newline separators are rejected.
-         * The parser should:
-         * - Detect missing newline separator
-         * - Throw MalformedMessageError with descriptive message
+         * Tests error handling for messages without a newline separator.
+         * Should throw MalformedMessageError with appropriate message.
          */
         it('should throw MalformedMessageError for missing newline separator', () => {
             const messageWithoutNewline = Buffer.from('publish:test.topic:1.0.0');
@@ -154,10 +125,8 @@ describe('message utils', () => {
         });
 
         /**
-         * Verifies that messages with invalid action types are rejected.
-         * The parser should:
-         * - Validate the action type
-         * - Throw MalformedMessageError for unknown actions
+         * Tests validation of action types in message headers.
+         * Should throw MalformedMessageError for invalid actions.
          */
         it('should throw MalformedMessageError for invalid action type', () => {
             const messageWithInvalidAction = Buffer.from('invalid:test.topic:1.0.0\n{}');
@@ -166,10 +135,8 @@ describe('message utils', () => {
         });
 
         /**
-         * Verifies that messages with invalid topic names are rejected.
-         * The parser should:
-         * - Validate the topic name format
-         * - Throw MalformedMessageError for invalid topics
+         * Tests validation of topic names in message headers.
+         * Should throw MalformedMessageError for invalid topic formats.
          */
         it('should throw MalformedMessageError for invalid topic name', () => {
             const messageWithInvalidTopic = Buffer.from('publish:invalid/topic:1.0.0\n{}');
@@ -178,10 +145,8 @@ describe('message utils', () => {
         });
 
         /**
-         * Verifies that messages with invalid version formats are rejected.
-         * The parser should:
-         * - Validate the version format
-         * - Throw MalformedMessageError for invalid versions
+         * Tests validation of version formats in message headers.
+         * Should throw MalformedMessageError for invalid semver versions.
          */
         it('should throw MalformedMessageError for invalid version format', () => {
             const messageWithInvalidVersion = Buffer.from('publish:test.topic:invalid\n{}');
@@ -190,10 +155,8 @@ describe('message utils', () => {
         });
 
         /**
-         * Verifies that messages with invalid request ID formats are rejected.
-         * The parser should:
-         * - Validate the request ID format
-         * - Throw MalformedMessageError for invalid request IDs
+         * Tests validation of request ID formats.
+         * Should throw MalformedMessageError for non-UUID request IDs.
          */
         it('should throw MalformedMessageError for invalid request ID format', () => {
             const messageWithInvalidRequestId = Buffer.from('publish:test.topic:1.0.0:invalid-req-id\n{}');
@@ -202,10 +165,8 @@ describe('message utils', () => {
         });
 
         /**
-         * Verifies that messages with missing header parts are rejected.
-         * The parser should:
-         * - Validate all required header components
-         * - Throw MalformedMessageError for missing parts
+         * Tests validation of required header components.
+         * Should throw MalformedMessageError when required parts are missing.
          */
         it('should throw MalformedMessageError for missing header parts', () => {
             const messageWithMissingParts = Buffer.from('publish:test.topic\n{}');
@@ -214,10 +175,8 @@ describe('message utils', () => {
         });
 
         /**
-         * Verifies that messages with invalid JSON payloads are rejected.
-         * The parser should:
-         * - Validate JSON payload format
-         * - Throw MalformedMessageError for invalid JSON
+         * Tests validation of JSON payload format.
+         * Should throw MalformedMessageError for invalid JSON.
          */
         it('should throw error for invalid JSON payload', () => {
             const message = Buffer.from('publish:test.topic:1.0.0\n{invalid:json}');
@@ -226,10 +185,8 @@ describe('message utils', () => {
         });
 
         /**
-         * Verifies that timeout values are validated correctly.
-         * The parser should:
-         * - Validate timeout values
-         * - Throw MalformedMessageError for invalid timeouts
+         * Tests validation of timeout values.
+         * Should throw MalformedMessageError for invalid timeout values.
          */
         it('should validate timeout value', () => {
             const payload = { timeout: -1 };
@@ -238,10 +195,8 @@ describe('message utils', () => {
         });
 
         /**
-         * Verifies that timeout is only allowed in request messages.
-         * The parser should:
-         * - Validate timeout usage
-         * - Throw MalformedMessageError for timeouts in non-request messages
+         * Tests validation of timeout usage in different message types.
+         * Should throw MalformedMessageError when timeout is used in non-request messages.
          */
         it('should validate timeout is only allowed for request actions', () => {
             const payload = { timeout: 1000 };
@@ -250,7 +205,8 @@ describe('message utils', () => {
         });
 
         /**
-         * Tests error object validation in payload
+         * Tests validation of error object structure in payloads.
+         * Should throw MalformedMessageError for invalid error objects.
          */
         it('should throw MalformedMessageError for invalid error object structure', () => {
             const message = Buffer.from('publish:test.topic:1.0.0\nerror:{"code":"TEST_ERROR"}');
@@ -260,7 +216,8 @@ describe('message utils', () => {
         });
 
         /**
-         * Tests throwing MessageError for valid error objects
+         * Tests handling of valid error objects in payloads.
+         * Should throw MessageError with correct properties.
          */
         it('should throw MessageError for valid error object', () => {
             const errorPayload = {
@@ -285,10 +242,8 @@ describe('message utils', () => {
         });
 
         /**
-         * Verifies that valid error objects in payloads are accepted.
-         * The parser should:
-         * - Validate complete error object structure
-         * - Accept valid error objects
+         * Tests handling of valid error objects in regular payloads.
+         * Should accept error objects when properly formatted.
          */
         it('should accept valid error object in payload', () => {
             const payload = {
@@ -304,10 +259,8 @@ describe('message utils', () => {
         });
 
         /**
-         * Verifies that payload size limits are enforced.
-         * The parser should:
-         * - Validate payload size
-         * - Throw MalformedMessageError for oversized payloads
+         * Tests enforcement of payload size limits.
+         * Should throw MalformedMessageError for oversized payloads.
          */
         it('should handle payload size validation', () => {
             const largePayload = { data: 'x'.repeat(32 * 1024 + 1) };
@@ -317,7 +270,8 @@ describe('message utils', () => {
         });
 
         /**
-         * Tests the getter methods of the Parser class
+         * Tests access to message components via getter methods.
+         * Verifies all getter methods return correct values.
          */
         it('should provide access to message components via getters', () => {
             const message = Buffer.from('publish:test.topic:1.0.0\n{"data":"test"}');
@@ -331,7 +285,8 @@ describe('message utils', () => {
         });
 
         /**
-         * Tests parent request ID validation
+         * Tests validation of parent request ID format.
+         * Should throw MalformedMessageError for invalid parent request IDs.
          */
         it('should throw MalformedMessageError for invalid parent request ID format', () => {
             const message = Buffer.from('publish:test.topic:1.0.0:123e4567-e89b-12d3-a456-426614174000:invalid-parent\n{}');
@@ -340,7 +295,8 @@ describe('message utils', () => {
         });
 
         /**
-         * Tests invalid timeout value validation
+         * Tests validation of timeout values.
+         * Should throw MalformedMessageError for invalid timeout values.
          */
         it('should throw MalformedMessageError for invalid timeout value', () => {
             const message = Buffer.from('request:test.topic:1.0.0:123e4567-e89b-12d3-a456-426614174000::6000\n{}');
@@ -349,7 +305,8 @@ describe('message utils', () => {
         });
 
         /**
-         * Tests timeout validation in non-request messages
+         * Tests timeout validation in non-request messages.
+         * Should throw MalformedMessageError when timeout is used in wrong message type.
          */
         it('should throw MalformedMessageError for timeout in non-request message', () => {
             const message = Buffer.from('publish:test.topic:1.0.0:123e4567-e89b-12d3-a456-426614174000::1000\n{}');
@@ -360,22 +317,29 @@ describe('message utils', () => {
 
     /**
      * Tests for message serialization functionality.
-     * Verifies the serialize function properly handles:
-     * - Messages with complete headers and payloads
-     * - Messages without request IDs
-     * - Messages with empty payloads
-     * - Error response messages
+     * Verifies proper serialization of messages with various header and payload combinations.
+     *
+     * @group Serialization
      */
     describe('serialize', () => {
         /**
-         * Tests for serializePayload function
+         * Tests for payload serialization functionality.
+         * Verifies proper handling of different payload types.
          */
         describe('serializePayload', () => {
+            /**
+             * Tests serialization of Buffer payloads.
+             * Should convert Buffer to string correctly.
+             */
             it('should handle Buffer payload', () => {
                 const bufferPayload = Buffer.from('test payload');
                 expect(serializePayload(bufferPayload)).toBe('test payload');
             });
 
+            /**
+             * Tests serialization with custom replacer function.
+             * Should apply replacer function to filter payload properties.
+             */
             it('should handle object payload with replacer', () => {
                 const payload = { key: 'value', sensitive: 'secret' };
                 const replacer = (key: string, value: any) => key === 'sensitive' ? undefined : value;
@@ -384,7 +348,8 @@ describe('message utils', () => {
         });
 
         /**
-         * Tests for header combinations in serialize function
+         * Tests serialization of messages with timeout.
+         * Should include all header components including timeout.
          */
         it('should serialize message with timeout', () => {
             const header = {
@@ -401,6 +366,10 @@ describe('message utils', () => {
             expect(serialized).toBe('request:test.topic:1.0.0:123e4567-e89b-12d3-a456-426614174000:987fcdeb-51a2-43e8-9876-543210fedcba:1000\n{"data":"test"}');
         });
 
+        /**
+         * Tests serialization of messages with parent request ID but no timeout.
+         * Should include requestId and parentRequestId but omit timeout.
+         */
         it('should serialize message with parent request ID but no timeout', () => {
             const header = {
                 action: ActionType.REQUEST,
@@ -415,6 +384,10 @@ describe('message utils', () => {
             expect(serialized).toBe('request:test.topic:1.0.0:123e4567-e89b-12d3-a456-426614174000:987fcdeb-51a2-43e8-9876-543210fedcba\n{"data":"test"}');
         });
 
+        /**
+         * Tests serialization with missing optional header fields.
+         * Should handle undefined fields by using empty strings.
+         */
         it('should handle missing optional fields in header', () => {
             const header = {
                 action: ActionType.REQUEST,
@@ -428,6 +401,10 @@ describe('message utils', () => {
             expect(serialized).toBe('request:test.topic:1.0.0:::1000\n{"data":"test"}');
         });
 
+        /**
+         * Tests serialization with only requestId present.
+         * Should include requestId but omit other optional fields.
+         */
         it('should serialize message with requestId only', () => {
             const header = {
                 action: ActionType.REQUEST,
@@ -441,6 +418,10 @@ describe('message utils', () => {
             expect(serialized).toBe('request:test.topic:1.0.0:123e4567-e89b-12d3-a456-426614174000\n{"data":"test"}');
         });
 
+        /**
+         * Tests serialization with both requestId and parentRequestId.
+         * Should include both IDs in correct order.
+         */
         it('should serialize message with requestId and parentRequestId', () => {
             const header = {
                 action: ActionType.REQUEST,
@@ -455,6 +436,10 @@ describe('message utils', () => {
             expect(serialized).toBe('request:test.topic:1.0.0:123e4567-e89b-12d3-a456-426614174000:987fcdeb-51a2-43e8-9876-543210fedcba\n{"data":"test"}');
         });
 
+        /**
+         * Tests serialization with blank requestId and parentRequestId.
+         * Should handle undefined requestId correctly.
+         */
         it('should serialize message with blank requestId and parentRequestId', () => {
             const header = {
                 action: ActionType.REQUEST,
@@ -470,11 +455,8 @@ describe('message utils', () => {
         });
 
         /**
-         * Verifies that messages with complete headers and payloads are serialized correctly.
-         * The function should:
-         * - Format the header with all components
-         * - Serialize the payload to JSON
-         * - Combine with correct separator
+         * Tests basic message serialization.
+         * Should correctly format header and payload with newline separator.
          */
         it('should serialize message with header and payload correctly', () => {
             const header = {
@@ -492,11 +474,8 @@ describe('message utils', () => {
         });
 
         /**
-         * Verifies that messages without request IDs are serialized correctly.
-         * The function should:
-         * - Format the header without requestid
-         * - Serialize the payload to JSON
-         * - Combine with correct separator
+         * Tests serialization without request ID.
+         * Should omit requestId from header string.
          */
         it('should serialize message without requestid correctly', () => {
             const header = {
@@ -513,11 +492,8 @@ describe('message utils', () => {
         });
 
         /**
-         * Verifies that messages with empty payloads are serialized correctly.
-         * The function should:
-         * - Format the header normally
-         * - Serialize empty payload as empty object
-         * - Combine with correct separator
+         * Tests serialization with empty payload.
+         * Should serialize as empty JSON object.
          */
         it('should serialize message with empty payload correctly', () => {
             const header = {
@@ -532,11 +508,8 @@ describe('message utils', () => {
         });
 
         /**
-         * Verifies that error response messages are serialized correctly.
-         * The function should:
-         * - Format the response header
-         * - Serialize error payload with all components
-         * - Combine with correct separator
+         * Tests serialization of error response messages.
+         * Should correctly format error object in payload.
          */
         it('should serialize error response message correctly', () => {
             const header = {
@@ -559,9 +532,16 @@ describe('message utils', () => {
     });
 
     /**
-     * Tests for toBrokerHeader function
+     * Tests for toBrokerHeader function.
+     * Verifies proper conversion of client headers to broker headers.
+     *
+     * @group Headers
      */
     describe('toBrokerHeader', () => {
+        /**
+         * Tests basic header conversion with new request ID.
+         * Should generate new request ID and maintain other fields.
+         */
         it('should convert client header to broker header with new request ID', () => {
             const clientHeader = {
                 action: ActionType.PUBLISH,
@@ -580,6 +560,10 @@ describe('message utils', () => {
             expect(brokerHeader.requestId).not.toBe(clientHeader.requestId);
         });
 
+        /**
+         * Tests header conversion with provided request ID.
+         * Should use provided ID instead of generating new one.
+         */
         it('should use provided request ID when specified', () => {
             const clientHeader = {
                 action: ActionType.PUBLISH,
@@ -592,6 +576,10 @@ describe('message utils', () => {
             expect(brokerHeader.requestId).toBe(newRequestId);
         });
 
+        /**
+         * Tests header conversion with action override.
+         * Should use provided action instead of original.
+         */
         it('should override action when specified', () => {
             const clientHeader = {
                 action: ActionType.PUBLISH,
