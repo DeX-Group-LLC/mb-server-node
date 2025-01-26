@@ -4,7 +4,10 @@ import { GaugeSlot, RateSlot } from '@core/monitoring/metrics/slots';
 import { InternalError } from '@core/errors';
 import logger from '@utils/logger';
 
-// Mock logger
+/**
+ * Mock setup for the logger to prevent actual logging during tests.
+ * Provides mock implementations for info and error logging levels.
+ */
 jest.mock('@utils/logger', () => {
     const mockLogger = {
         info: jest.fn(),
@@ -19,23 +22,34 @@ jest.mock('@utils/logger', () => {
 
 /**
  * Test suite for MonitoringManager class.
- * Tests the core functionality of the monitoring system.
- *
- * Key areas tested:
+ * Tests the core functionality of the monitoring system, including:
  * - Metric registration and retrieval
- * - Parameterized metrics
- * - Error handling
- * - Metric serialization
- * - Cleanup and disposal
+ * - Parameterized metrics handling
+ * - Error handling for invalid operations
+ * - Metric serialization with different formats
+ * - Resource cleanup and disposal
  */
 describe('MonitoringManager', () => {
     let manager: MonitoringManager;
 
+    /**
+     * Test setup before each test case:
+     * - Resets all mocks
+     * - Creates a fresh MonitoringManager instance
+     */
     beforeEach(() => {
         jest.resetAllMocks();
         manager = new MonitoringManager();
     });
 
+    /**
+     * Tests for registering new metrics.
+     * Verifies behavior including:
+     * - Basic metric registration
+     * - Duplicate metric handling
+     * - Invalid metric name handling
+     * - Resource cleanup
+     */
     describe('registerMetric', () => {
         it('should register a new metric', () => {
             const metric = manager.registerMetric('system.cpu.usage', GaugeSlot);
@@ -64,6 +78,14 @@ describe('MonitoringManager', () => {
         });
     });
 
+    /**
+     * Tests for registering parameterized metrics.
+     * Verifies behavior including:
+     * - Basic parameterized metric registration
+     * - Duplicate registration handling
+     * - Individual metric instance creation and tracking
+     * - Resource cleanup
+     */
     describe('registerParameterized', () => {
         it('should register a new parameterized metric', () => {
             const metric = manager.registerParameterized('system.cpu.{core}.usage', GaugeSlot);
@@ -101,6 +123,13 @@ describe('MonitoringManager', () => {
         });
     });
 
+    /**
+     * Tests for retrieving metrics.
+     * Verifies behavior including:
+     * - Non-existent metric handling
+     * - Regular metric retrieval
+     * - Parameterized metric retrieval
+     */
     describe('getMetric', () => {
         it('should return undefined for non-existent metric', () => {
             expect(manager.getMetric('system.cpu.usage')).toBeUndefined();
@@ -125,7 +154,21 @@ describe('MonitoringManager', () => {
         });
     });
 
+    /**
+     * Tests for serializing metrics.
+     * Verifies behavior including:
+     * - Value-only serialization
+     * - Full info serialization with metadata
+     * - Parameterized metric filtering
+     * - Rate metric handling
+     */
     describe('serializeMetrics', () => {
+        /**
+         * Setup test metrics before each test case:
+         * - Regular metrics (CPU and memory usage)
+         * - Parameterized CPU core metrics
+         * - Parameterized network interface metrics
+         */
         beforeEach(() => {
             // Setup some test metrics
             const cpuUsage = manager.registerMetric('system.cpu.usage', GaugeSlot);
@@ -213,6 +256,12 @@ describe('MonitoringManager', () => {
         });
     });
 
+    /**
+     * Tests for disposing of the monitoring manager.
+     * Verifies behavior including:
+     * - Complete cleanup of all metrics
+     * - Logging of cleanup operations
+     */
     describe('dispose', () => {
         it('should dispose all metrics', () => {
             // Setup some test metrics
