@@ -25,6 +25,10 @@ export class SystemManager {
      * @param intervalMs The interval in milliseconds to collect metrics (default: 1000)
      */
     public start(intervalMs: number = 1000): void {
+        // Stop any existing interval
+        if (this.updateInterval) this.dispose();
+
+        // Set the uptime metrics
         const systemBootTime = new Date(Date.now() - (os.uptime() * 1000));
         this.metrics.systemUptime.slot.set(systemBootTime);
         this.metrics.processUptime.slot.set(new Date());
