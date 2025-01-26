@@ -254,6 +254,21 @@ describe('MonitoringManager', () => {
                 'system.network.{interface:eth0}.rate': 100
             });
         });
+
+        it('should filter parameterized metrics with full info', async () => {
+            // Wait for rate interval to complete
+            await new Promise(resolve => setTimeout(resolve, 1100));
+            const metrics = manager.serializeMetrics(true, { interface: 'eth0' });
+            expect(metrics).toMatchObject({
+                'system.network.{interface:eth0}.rate': {
+                    name: 'system.network.{interface:eth0}.rate',
+                    type: 'rate',
+                    value: 100,
+                    timestamp: expect.any(String)
+                }
+            });
+            expect(Object.keys(metrics).length).toBe(1);
+        });
     });
 
     /**
