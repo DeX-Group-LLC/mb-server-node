@@ -1,3 +1,9 @@
+/**
+ * Unit tests for the MessageRouter class.
+ * Tests the routing functionality for different message types (PUBLISH, REQUEST, RESPONSE)
+ * and various error conditions.
+ */
+
 import { jest } from '@jest/globals';
 import { randomUUID } from 'crypto';
 import { config } from '@config';
@@ -14,7 +20,11 @@ import { InvalidRequestIdError } from '@core/errors';
 import { RouterMetrics } from '@core/router/metrics';
 import { GaugeSlot, RateSlot, AverageSlot, MaximumSlot } from '@core/monitoring/metrics/slots';
 
-// Mock external dependencies to isolate MessageRouter tests
+/**
+ * Mock external dependencies to isolate MessageRouter tests.
+ * This includes mocking the connection manager, service registry, subscription manager,
+ * and logger to prevent actual network calls and file system operations.
+ */
 jest.mock('@core/connection/manager');
 jest.mock('@core/registry');
 jest.mock('@core/subscription');
@@ -39,6 +49,10 @@ describe('MessageRouter', () => {
     let mockSubscriptionManager: jest.Mocked<SubscriptionManager>;
     let monitoringManager: MonitoringManager;
 
+    /**
+     * Set up test environment before each test.
+     * Creates fresh instances of mocks and the MessageRouter to ensure test isolation.
+     */
     beforeEach(() => {
         // Reset all mock implementations and call history before each test
         jest.resetAllMocks();
@@ -75,12 +89,19 @@ describe('MessageRouter', () => {
         messageRouter.assignServiceRegistry(mockServiceRegistry);
     });
 
+    /**
+     * Clean up after each test to ensure isolation.
+     */
     afterEach(() => {
         // Clean up any outstanding requests after each test to ensure isolation
         messageRouter.dispose();
     });
 
     describe('routeMessage', () => {
+        /**
+         * Tests handling of system messages by verifying they are properly
+         * delegated to the ServiceRegistry.
+         */
         it('should handle system messages by delegating to ServiceRegistry', () => {
             // Setup test message with system topic
             const header: ClientHeader = {
@@ -106,6 +127,10 @@ describe('MessageRouter', () => {
             expect(mockConnectionManager.sendMessage).not.toHaveBeenCalled();
         });
 
+        /**
+         * Tests handling of PUBLISH messages by verifying they are properly
+         * forwarded to all subscribers.
+         */
         it('should handle PUBLISH action', () => {
             // Setup test message with PUBLISH action
             const header: ClientHeader = {
@@ -135,6 +160,10 @@ describe('MessageRouter', () => {
             );
         });
 
+        /**
+         * Tests handling of REQUEST messages by verifying they are properly
+         * forwarded to the selected subscriber.
+         */
         it('should handle REQUEST action', () => {
             // Setup test message with REQUEST action
             const requestId = randomUUID();
@@ -167,6 +196,10 @@ describe('MessageRouter', () => {
             );
         });
 
+        /**
+         * Tests handling of RESPONSE messages by verifying they are properly
+         * routed back to the original requester.
+         */
         it('should handle RESPONSE action', () => {
             // Create a request first
             const originServiceId = 'service1';
@@ -217,6 +250,10 @@ describe('MessageRouter', () => {
             );
         });
 
+        /**
+         * Tests error handling in PUBLISH action by verifying error metrics
+         * are properly incremented.
+         */
         it('should handle errors in PUBLISH action and increment error metrics', () => {
             // Setup test message with PUBLISH action
             const header: ClientHeader = {
@@ -246,6 +283,10 @@ describe('MessageRouter', () => {
             expect(metrics.messageCountError.slot.value).toBe(initialMessageErrors + 1);
         });
 
+        /**
+         * Tests error handling in REQUEST action by verifying error metrics
+         * are properly incremented.
+         */
         it('should handle errors in REQUEST action and increment error metrics', () => {
             // Setup test message with REQUEST action
             const header: ClientHeader = {
@@ -276,6 +317,10 @@ describe('MessageRouter', () => {
             expect(metrics.messageCountError.slot.value).toBe(initialMessageErrors + 1);
         });
 
+        /**
+         * Tests error handling in RESPONSE action by verifying error metrics
+         * are properly incremented.
+         */
         it('should handle errors in RESPONSE action and increment error metrics', () => {
             // Setup test message with RESPONSE action
             const header: BrokerHeader = {
@@ -301,6 +346,10 @@ describe('MessageRouter', () => {
             expect(metrics.messageCountError.slot.value).toBe(initialMessageErrors + 1);
         });
 
+        /**
+         * Tests handling of unknown action types by verifying an appropriate
+         * error response is sent.
+         */
         it('should handle unknown action types with error response', () => {
             // Create a parser with an unknown action type by bypassing validation
             const parser = new Parser(Buffer.from('publish:test.topic:1.0.0\n{"data":"test"}'));
@@ -336,6 +385,10 @@ describe('MessageRouter', () => {
             );
         });
 
+        /**
+         * Tests handling of PUBLISH messages with no subscribers by verifying
+         * an appropriate error response is sent.
+         */
         it('should handle PUBLISH with no subscribers by sending error response', () => {
             // Setup test message with PUBLISH action
             const header: ClientHeader = {
@@ -377,6 +430,10 @@ describe('MessageRouter', () => {
             );
         });
 
+        /**
+         * Tests handling of PUBLISH messages with requestId by verifying
+         * a success response is sent back to the publisher.
+         */
         it('should handle PUBLISH with requestId by sending success response', () => {
             // Setup test message with PUBLISH action and requestId
             const header: ClientHeader = {
@@ -418,6 +475,10 @@ describe('MessageRouter', () => {
             );
         });
 
+        /**
+         * Tests handling of REQUEST messages with no subscribers by verifying
+         * a NoRouteFoundError is thrown.
+         */
         it('should handle REQUEST with no subscribers by throwing NoRouteFoundError', () => {
             // Setup test message with REQUEST action
             const header: ClientHeader = {
@@ -446,6 +507,10 @@ describe('MessageRouter', () => {
             expect(metrics.messageCountError.slot.value).toBe(initialMessageErrors + 1);
         });
 
+        /**
+         * Tests handling of system messages in REQUEST action by verifying
+         * they are properly delegated to the ServiceRegistry.
+         */
         it('should handle system messages in REQUEST action by delegating to ServiceRegistry', () => {
             // Setup test message with REQUEST action and system topic
             const header: ClientHeader = {
@@ -472,6 +537,10 @@ describe('MessageRouter', () => {
             expect(mockConnectionManager.sendMessage).not.toHaveBeenCalled();
         });
 
+        /**
+         * Tests handling of maximum outstanding requests by verifying the oldest
+         * request is evicted and appropriate error responses are sent.
+         */
         it('should handle maximum outstanding requests by sending error response', () => {
             // Mock the config to have a lower max outstanding requests value for testing
             const originalMaxRequests = config.max.outstanding.requests;
@@ -548,6 +617,10 @@ describe('MessageRouter', () => {
             config.max.outstanding.requests = originalMaxRequests;
         });
 
+        /**
+         * Tests handling of system message responses by verifying they are
+         * properly delegated to the ServiceRegistry.
+         */
         it('should handle system message responses by delegating to ServiceRegistry', () => {
             // Setup test message with RESPONSE action and system topic
             const header: BrokerHeader = {
@@ -573,6 +646,10 @@ describe('MessageRouter', () => {
             expect(mockConnectionManager.sendMessage).not.toHaveBeenCalled();
         });
 
+        /**
+         * Tests error handling when a RESPONSE has no requestId by verifying
+         * an appropriate error is thrown.
+         */
         it('should throw error when RESPONSE has no requestId', () => {
             // Setup test message with RESPONSE action but no requestId
             const header: BrokerHeader = {
@@ -597,6 +674,10 @@ describe('MessageRouter', () => {
             expect(metrics.messageCountError.slot.value).toBe(initialMessageErrors + 1);
         });
 
+        /**
+         * Tests handling of error responses by verifying error metrics are
+         * properly incremented.
+         */
         it('should handle error responses and increment error metrics', () => {
             // Create a request first
             const originServiceId = 'service1';
@@ -644,6 +725,10 @@ describe('MessageRouter', () => {
             expect(metrics.responseCountError.slot.value).toBe(initialResponseErrors + 1);
         });
 
+        /**
+         * Tests handling of responses without original requestId by verifying
+         * appropriate logging behavior.
+         */
         it('should handle responses without original requestId by logging appropriately', () => {
             // Create a request first
             const originServiceId = 'service1';
@@ -691,6 +776,10 @@ describe('MessageRouter', () => {
             );
         });
 
+        /**
+         * Tests handling of request timeouts by verifying appropriate error
+         * responses are sent and metrics are updated.
+         */
         it('should handle request timeouts by sending error response', () => {
             // Mock timers
             jest.useFakeTimers();
@@ -742,6 +831,10 @@ describe('MessageRouter', () => {
             jest.useRealTimers();
         });
 
+        /**
+         * Tests eviction of oldest request when maximum outstanding requests
+         * is reached during request generation.
+         */
         it('should evict oldest request when max outstanding requests is reached during request generation', () => {
             // Mock the config to have a lower max outstanding requests value for testing
             const originalMaxRequests = config.max.outstanding.requests;
@@ -837,6 +930,10 @@ describe('MessageRouter', () => {
             config.max.outstanding.requests = originalMaxRequests;
         });
 
+        /**
+         * Tests handling of request generation without requestId in the original
+         * header by verifying the request is created without a timeout.
+         */
         it('should handle request generation without requestId in original header', () => {
             // Setup test message with REQUEST action but no requestId
             const header: ClientHeader = {

@@ -1,6 +1,6 @@
-import { MalformedMessageError } from '@core/errors';
+import { MalformedMessageError, MessageError } from '@core/errors';
 import { ActionType } from '@core/types';
-import { Parser, serialize, prettySize } from '@core/utils/message';
+import { Parser, serialize, prettySize, toBrokerHeader, serializePayload } from '@core/utils/message';
 
 // Mock config before imports
 jest.mock('@config', () => ({
@@ -250,16 +250,38 @@ describe('message utils', () => {
         });
 
         /**
-         * Verifies that error objects in payloads are validated correctly.
-         * The parser should:
-         * - Validate error object structure
-         * - Throw MalformedMessageError for invalid error objects
+         * Tests error object validation in payload
          */
-        it('should validate error object in payload', () => {
-            const payload = { error: { code: 'ERR_001' } };
-            const message = Buffer.from(`publish:test.topic:1.0.0\nerror:${JSON.stringify(payload)}`);
+        it('should throw MalformedMessageError for invalid error object structure', () => {
+            const message = Buffer.from('publish:test.topic:1.0.0\nerror:{"code":"TEST_ERROR"}');
             const parser = new Parser(message);
             expect(() => parser.parsePayload()).toThrow(MalformedMessageError);
+            expect(() => parser.parsePayload()).toThrow(/Invalid error object in payload/);
+        });
+
+        /**
+         * Tests throwing MessageError for valid error objects
+         */
+        it('should throw MessageError for valid error object', () => {
+            const errorPayload = {
+                code: 'TEST_ERROR',
+                message: 'Test error message',
+                details: { additionalInfo: 'test details' },
+                timestamp: '2023-01-01T00:00:00Z'
+            };
+            const message = Buffer.from(`publish:test.topic:1.0.0\nerror:${JSON.stringify(errorPayload)}`);
+            const parser = new Parser(message);
+
+            try {
+                parser.parsePayload();
+                fail('Expected MessageError to be thrown');
+            } catch (error) {
+                expect(error instanceof MessageError).toBe(true);
+                const messageError = error as MessageError;
+                expect(messageError.code).toBe('TEST_ERROR');
+                expect(messageError.message).toBe('Test error message');
+                expect(messageError.details).toEqual({ additionalInfo: 'test details' });
+            }
         });
 
         /**
@@ -293,6 +315,47 @@ describe('message utils', () => {
             const parser = new Parser(message);
             expect(() => parser.parsePayload()).toThrow(MalformedMessageError);
         });
+
+        /**
+         * Tests the getter methods of the Parser class
+         */
+        it('should provide access to message components via getters', () => {
+            const message = Buffer.from('publish:test.topic:1.0.0\n{"data":"test"}');
+            const parser = new Parser(message);
+
+            expect(parser.length).toBe(message.length);
+            expect(parser.hasError).toBe(false);
+            expect(parser.rawMessage).toEqual(message);
+            expect(parser.rawHeader).toEqual(Buffer.from('publish:test.topic:1.0.0'));
+            expect(parser.rawPayload).toEqual(Buffer.from('{"data":"test"}'));
+        });
+
+        /**
+         * Tests parent request ID validation
+         */
+        it('should throw MalformedMessageError for invalid parent request ID format', () => {
+            const message = Buffer.from('publish:test.topic:1.0.0:123e4567-e89b-12d3-a456-426614174000:invalid-parent\n{}');
+            expect(() => new Parser(message)).toThrow(MalformedMessageError);
+            expect(() => new Parser(message)).toThrow(/Invalid parent request ID format/);
+        });
+
+        /**
+         * Tests invalid timeout value validation
+         */
+        it('should throw MalformedMessageError for invalid timeout value', () => {
+            const message = Buffer.from('request:test.topic:1.0.0:123e4567-e89b-12d3-a456-426614174000::6000\n{}');
+            expect(() => new Parser(message)).toThrow(MalformedMessageError);
+            expect(() => new Parser(message)).toThrow(/Invalid timeout value/);
+        });
+
+        /**
+         * Tests timeout validation in non-request messages
+         */
+        it('should throw MalformedMessageError for timeout in non-request message', () => {
+            const message = Buffer.from('publish:test.topic:1.0.0:123e4567-e89b-12d3-a456-426614174000::1000\n{}');
+            expect(() => new Parser(message)).toThrow(MalformedMessageError);
+            expect(() => new Parser(message)).toThrow(/Timeout is only allowed for request actions/);
+        });
     });
 
     /**
@@ -304,6 +367,108 @@ describe('message utils', () => {
      * - Error response messages
      */
     describe('serialize', () => {
+        /**
+         * Tests for serializePayload function
+         */
+        describe('serializePayload', () => {
+            it('should handle Buffer payload', () => {
+                const bufferPayload = Buffer.from('test payload');
+                expect(serializePayload(bufferPayload)).toBe('test payload');
+            });
+
+            it('should handle object payload with replacer', () => {
+                const payload = { key: 'value', sensitive: 'secret' };
+                const replacer = (key: string, value: any) => key === 'sensitive' ? undefined : value;
+                expect(serializePayload(payload, replacer)).toBe('{"key":"value"}');
+            });
+        });
+
+        /**
+         * Tests for header combinations in serialize function
+         */
+        it('should serialize message with timeout', () => {
+            const header = {
+                action: ActionType.REQUEST,
+                topic: 'test.topic',
+                version: '1.0.0',
+                requestId: '123e4567-e89b-12d3-a456-426614174000',
+                parentRequestId: '987fcdeb-51a2-43e8-9876-543210fedcba',
+                timeout: 1000
+            };
+            const payload = { data: 'test' };
+
+            const serialized = serialize(header, payload);
+            expect(serialized).toBe('request:test.topic:1.0.0:123e4567-e89b-12d3-a456-426614174000:987fcdeb-51a2-43e8-9876-543210fedcba:1000\n{"data":"test"}');
+        });
+
+        it('should serialize message with parent request ID but no timeout', () => {
+            const header = {
+                action: ActionType.REQUEST,
+                topic: 'test.topic',
+                version: '1.0.0',
+                requestId: '123e4567-e89b-12d3-a456-426614174000',
+                parentRequestId: '987fcdeb-51a2-43e8-9876-543210fedcba'
+            };
+            const payload = { data: 'test' };
+
+            const serialized = serialize(header, payload);
+            expect(serialized).toBe('request:test.topic:1.0.0:123e4567-e89b-12d3-a456-426614174000:987fcdeb-51a2-43e8-9876-543210fedcba\n{"data":"test"}');
+        });
+
+        it('should handle missing optional fields in header', () => {
+            const header = {
+                action: ActionType.REQUEST,
+                topic: 'test.topic',
+                version: '1.0.0',
+                timeout: 1000
+            };
+            const payload = { data: 'test' };
+
+            const serialized = serialize(header, payload);
+            expect(serialized).toBe('request:test.topic:1.0.0:::1000\n{"data":"test"}');
+        });
+
+        it('should serialize message with requestId only', () => {
+            const header = {
+                action: ActionType.REQUEST,
+                topic: 'test.topic',
+                version: '1.0.0',
+                requestId: '123e4567-e89b-12d3-a456-426614174000'
+            };
+            const payload = { data: 'test' };
+
+            const serialized = serialize(header, payload);
+            expect(serialized).toBe('request:test.topic:1.0.0:123e4567-e89b-12d3-a456-426614174000\n{"data":"test"}');
+        });
+
+        it('should serialize message with requestId and parentRequestId', () => {
+            const header = {
+                action: ActionType.REQUEST,
+                topic: 'test.topic',
+                version: '1.0.0',
+                requestId: '123e4567-e89b-12d3-a456-426614174000',
+                parentRequestId: '987fcdeb-51a2-43e8-9876-543210fedcba'
+            };
+            const payload = { data: 'test' };
+
+            const serialized = serialize(header, payload);
+            expect(serialized).toBe('request:test.topic:1.0.0:123e4567-e89b-12d3-a456-426614174000:987fcdeb-51a2-43e8-9876-543210fedcba\n{"data":"test"}');
+        });
+
+        it('should serialize message with blank requestId and parentRequestId', () => {
+            const header = {
+                action: ActionType.REQUEST,
+                topic: 'test.topic',
+                version: '1.0.0',
+                requestId: undefined,
+                parentRequestId: '987fcdeb-51a2-43e8-9876-543210fedcba'
+            };
+            const payload = { data: 'test' };
+
+            const serialized = serialize(header, payload);
+            expect(serialized).toBe('request:test.topic:1.0.0::987fcdeb-51a2-43e8-9876-543210fedcba\n{"data":"test"}');
+        });
+
         /**
          * Verifies that messages with complete headers and payloads are serialized correctly.
          * The function should:
@@ -390,6 +555,52 @@ describe('message utils', () => {
 
             const serialized = serialize(header, payload);
             expect(serialized).toBe('response:test.topic:1.0.0\n{"error":{"code":"TEST_ERROR","message":"Test error message","details":{"additionalInfo":"test details"},"timestamp":"2023-01-01T00:00:00Z"}}');
+        });
+    });
+
+    /**
+     * Tests for toBrokerHeader function
+     */
+    describe('toBrokerHeader', () => {
+        it('should convert client header to broker header with new request ID', () => {
+            const clientHeader = {
+                action: ActionType.PUBLISH,
+                topic: 'test.topic',
+                version: '1.0.0',
+                requestId: '123e4567-e89b-12d3-a456-426614174000'
+            };
+
+            const brokerHeader = toBrokerHeader(clientHeader);
+            expect(brokerHeader).toMatchObject({
+                action: ActionType.PUBLISH,
+                topic: 'test.topic',
+                version: '1.0.0'
+            });
+            expect(brokerHeader.requestId).toBeDefined();
+            expect(brokerHeader.requestId).not.toBe(clientHeader.requestId);
+        });
+
+        it('should use provided request ID when specified', () => {
+            const clientHeader = {
+                action: ActionType.PUBLISH,
+                topic: 'test.topic',
+                version: '1.0.0'
+            };
+            const newRequestId = '987fcdeb-51a2-43e8-9876-543210fedcba';
+
+            const brokerHeader = toBrokerHeader(clientHeader, undefined, newRequestId);
+            expect(brokerHeader.requestId).toBe(newRequestId);
+        });
+
+        it('should override action when specified', () => {
+            const clientHeader = {
+                action: ActionType.PUBLISH,
+                topic: 'test.topic',
+                version: '1.0.0'
+            };
+
+            const brokerHeader = toBrokerHeader(clientHeader, ActionType.REQUEST);
+            expect(brokerHeader.action).toBe(ActionType.REQUEST);
         });
     });
 });
