@@ -140,8 +140,8 @@ describe('MessageBroker', () => {
         (SubscriptionManager as jest.Mock).mockReturnValue(mockSubscriptionManager);
         (MessageRouter as jest.Mock).mockReturnValue(mockMessageRouter);
         (ServiceRegistry as jest.Mock).mockReturnValue(mockServiceRegistry);
-        (createTcpServer as jest.Mock).mockReturnValue(mockTcpServer);
-        (createWebSocketServer as jest.Mock).mockReturnValue(mockWsServer);
+        (createTcpServer as jest.Mock).mockReturnValue([mockTcpServer]);
+        (createWebSocketServer as jest.Mock).mockReturnValue([mockWsServer]);
 
         // Store the ConnectionManager instance when it's created
         (ConnectionManager as jest.Mock).mockImplementation((messageRouter, serviceRegistry, monitorManager, subscriptionManager) => {
