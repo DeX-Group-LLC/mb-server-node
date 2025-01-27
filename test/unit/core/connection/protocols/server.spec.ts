@@ -131,7 +131,7 @@ describe('CombinedServer', () => {
 
         mockServer = {
             on: jest.fn((event: string, handler: any) => {
-                if (event === 'connection') {
+                if (event === 'connection' || event === 'secureConnection') {
                     connectionHandler = handler;
                 } else if (event === 'error') {
                     serverErrorHandler = handler;

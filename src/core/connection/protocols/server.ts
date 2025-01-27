@@ -27,13 +27,14 @@ export interface CombinedServer {
  * @returns A CombinedServer instance that handles both TCP and WebSocket connections
  */
 export function createCombinedServer(connectionManager: ConnectionManager): CombinedServer {
+    const isTls = config.ssl && config.ssl.key && config.ssl.cert;
     // Create the base server (TCP or TLS)
-    const server = config.ssl && config.ssl.key && config.ssl.cert
+    const server = isTls
         ? createTlsServer({
-            key: fs.readFileSync(config.ssl.key),
-            cert: fs.readFileSync(config.ssl.cert),
+            key: fs.readFileSync(config.ssl!.key!),
+            cert: fs.readFileSync(config.ssl!.cert!),
             // Add proper TLS error handling
-            //handshakeTimeout: 10000, // 10 seconds timeout for handshake
+            //handshakeTimeout: 5000, // 5 seconds timeout for handshake
         })
         : createTcpServer();
 
@@ -74,7 +75,7 @@ export function createCombinedServer(connectionManager: ConnectionManager): Comb
     });
 
     // Handle incoming connections
-    server.on('connection', (socket: Socket) => {
+    server.on(isTls ? 'secureConnection' : 'connection', (socket: Socket) => {
         let isWebSocket = false;
         let buffer = Buffer.alloc(0);
 
