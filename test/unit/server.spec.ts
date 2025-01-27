@@ -1,8 +1,20 @@
 import { MessageBroker } from '@core/broker';
-import logger from '@utils/logger';
+import logger, { SetupLogger } from '@utils/logger';
 
 jest.mock('@core/broker');
-jest.mock('@utils/logger');
+jest.mock('@utils/logger', () => {
+    const mockLogger = {
+        info: jest.fn(),
+        error: jest.fn(),
+        warn: jest.fn(),
+        debug: jest.fn()
+    };
+    return {
+        __esModule: true,
+        default: mockLogger,
+        SetupLogger: jest.fn().mockReturnValue(mockLogger)
+    };
+});
 
 /**
  * Test suite for server initialization and shutdown functionality.
