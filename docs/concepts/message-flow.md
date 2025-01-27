@@ -15,9 +15,11 @@ This document explains how messages flow through the MB Server Node system.
 ```mermaid
 sequenceDiagram
     participant Client
+    box Message Broker (dotted)
     participant ConnectionManager
     participant Router
     participant Metrics
+    end
 
     Client->>ConnectionManager: Connect Request
     ConnectionManager->>ConnectionManager: Validate Request
@@ -37,8 +39,10 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant Publisher
+    box Message Broker (dotted)
     participant Router
     participant SubscriptionManager
+    end
     participant Subscribers
 
     Publisher->>Router: PUBLISH Message
@@ -59,8 +63,10 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant Client
+    box Message Broker (dotted)
     participant Router
     participant ServiceRegistry
+    end
     participant Service
 
     Client->>Router: REQUEST Message
@@ -82,7 +88,9 @@ System messages are used for:
 ```mermaid
 sequenceDiagram
     participant Component
+    box Message Broker (dotted)
     participant SystemManager
+    end
     participant Targets
 
     Component->>SystemManager: System Message
