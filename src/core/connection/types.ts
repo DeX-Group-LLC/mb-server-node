@@ -8,7 +8,7 @@ export interface Connection {
     readonly ip: string;
     get state(): ConnectionState;
 
-    onMessage(listener: (message: string) => void): void;
+    onMessage(listener: (message: Buffer) => void): void;
     onClose(listener: () => void): void;
     send(message: string): void;
     close(): void;

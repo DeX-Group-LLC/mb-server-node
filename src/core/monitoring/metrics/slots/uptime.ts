@@ -19,6 +19,14 @@ export class UptimeSlot extends BaseSlot implements ISlotSettable<Date> {
     }
 
     /**
+     * Gets the last modified time.
+     * This is overridden to return the latest time, as the uptime slot will always be updated per getter call.
+     */
+    get lastModified(): Date {
+        return new Date();
+    }
+
+    /**
      * Gets the current uptime in seconds.
      * Returns:
      * - 0 if disposed

@@ -1,25 +1,58 @@
+/**
+ * Unit tests for the MessageRouter class.
+ * Tests the routing functionality for different message types (PUBLISH, REQUEST, RESPONSE)
+ * and various error conditions.
+ */
+
 import { jest } from '@jest/globals';
+import { randomUUID } from 'crypto';
 import { config } from '@config';
 import { ConnectionManager } from '@core/connection';
-import { MessageRouter, Request } from '@core/router';
+import { MessageRouter } from '@core/router';
 import { ServiceRegistry } from '@core/registry';
 import { SubscriptionManager } from '@core/subscription';
 import { ActionType } from '@core/types';
-import { Header, Message } from '@core/utils';
-import logger from '@utils/logger';
+import { BrokerHeader, ClientHeader, Message } from '@core/utils/types';
+import { Parser, serialize } from '@core/utils/message';
+import logger, { SetupLogger } from '@utils/logger';
+import { MonitoringManager } from '@core/monitoring/manager';
+import { InvalidRequestIdError } from '@core/errors';
+import { RouterMetrics } from '@core/router/metrics';
+import { GaugeSlot, RateSlot, AverageSlot, MaximumSlot } from '@core/monitoring/metrics/slots';
 
-// Mock external dependencies to isolate MessageRouter tests
+/**
+ * Mock external dependencies to isolate MessageRouter tests.
+ * This includes mocking the connection manager, service registry, subscription manager,
+ * and logger to prevent actual network calls and file system operations.
+ */
 jest.mock('@core/connection/manager');
 jest.mock('@core/registry');
 jest.mock('@core/subscription');
-jest.mock('@utils/logger');
+jest.mock('@utils/logger', () => {
+    const mockLogger = {
+        info: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        debug: jest.fn()
+    };
+    return {
+        __esModule: true,
+        default: mockLogger,
+        SetupLogger: jest.fn().mockReturnValue(mockLogger)
+    };
+});
 
 describe('MessageRouter', () => {
     let messageRouter: MessageRouter;
     let mockConnectionManager: jest.Mocked<ConnectionManager>;
     let mockServiceRegistry: jest.Mocked<ServiceRegistry>;
     let mockSubscriptionManager: jest.Mocked<SubscriptionManager>;
+    let monitoringManager: MonitoringManager;
 
+    /**
+     * Set up test environment before each test.
+     * Creates fresh instances of mocks and the MessageRouter to ensure test isolation.
+     */
     beforeEach(() => {
         // Reset all mock implementations and call history before each test
         jest.resetAllMocks();
@@ -29,6 +62,8 @@ describe('MessageRouter', () => {
             // Mock subscriber retrieval methods
             getSubscribers: jest.fn().mockReturnValue([]),
             getTopSubscribers: jest.fn().mockReturnValue([]),
+            subscribe: jest.fn(),
+            unsubscribe: jest.fn()
         } as unknown as jest.Mocked<SubscriptionManager>;
 
         // Create mock ServiceRegistry with basic implementations
@@ -37,8 +72,11 @@ describe('MessageRouter', () => {
             handleSystemMessage: jest.fn(),
         } as unknown as jest.Mocked<ServiceRegistry>;
 
-        // Create MessageRouter with mock subscription manager
-        messageRouter = new MessageRouter(mockSubscriptionManager);
+        // Create real MonitoringManager
+        monitoringManager = new MonitoringManager();
+
+        // Create MessageRouter with mock managers and real monitoring
+        messageRouter = new MessageRouter(mockSubscriptionManager, monitoringManager);
 
         // Create mock ConnectionManager with basic implementations
         mockConnectionManager = {
@@ -51,892 +89,893 @@ describe('MessageRouter', () => {
         messageRouter.assignServiceRegistry(mockServiceRegistry);
     });
 
+    /**
+     * Clean up after each test to ensure isolation.
+     */
     afterEach(() => {
         // Clean up any outstanding requests after each test to ensure isolation
         messageRouter.dispose();
     });
 
     describe('routeMessage', () => {
+        /**
+         * Tests handling of system messages by verifying they are properly
+         * delegated to the ServiceRegistry.
+         */
         it('should handle system messages by delegating to ServiceRegistry', () => {
             // Setup test message with system topic
-            const message: Message = {
-                header: {
-                    action: ActionType.PUBLISH,
-                    topic: 'system.heartbeat',
-                    version: '1.0.0',
-                },
-                payload: { data: 'test' },
+            const header: ClientHeader = {
+                action: ActionType.PUBLISH,
+                topic: 'system.heartbeat',
+                version: '1.0.0',
             };
+            const payload = { data: 'test' };
+            const message = serialize(header, payload);
+            const parser = new Parser(Buffer.from(message));
 
             // Route the message
-            messageRouter.routeMessage('service1', message);
+            messageRouter.routeMessage('service1', parser);
 
             // Verify heartbeat was reset
             expect(mockServiceRegistry.resetHeartbeat).toHaveBeenCalledWith('service1');
 
             // Verify message was delegated to ServiceRegistry
-            expect(mockServiceRegistry.handleSystemMessage).toHaveBeenCalledWith('service1', message);
+            expect(mockServiceRegistry.handleSystemMessage).toHaveBeenCalledWith('service1', parser);
 
             // Verify no other handlers were called
             expect(mockSubscriptionManager.getSubscribers).not.toHaveBeenCalled();
             expect(mockConnectionManager.sendMessage).not.toHaveBeenCalled();
         });
 
-        it('should call handlePublish when action is PUBLISH', () => {
+        /**
+         * Tests handling of PUBLISH messages by verifying they are properly
+         * forwarded to all subscribers.
+         */
+        it('should handle PUBLISH action', () => {
             // Setup test message with PUBLISH action
-            const message: Message = {
-                header: {
-                    action: ActionType.PUBLISH,
-                    topic: 'test.topic',
-                    version: '1.0.0',
-                },
-                payload: { data: 'test' },
+            const header: ClientHeader = {
+                action: ActionType.PUBLISH,
+                topic: 'test.topic',
+                version: '1.0.0',
             };
+            const payload = { data: 'test' };
+            const message = serialize(header, payload);
+            const parser = new Parser(Buffer.from(message));
 
             // Mock subscribers for the topic
             mockSubscriptionManager.getSubscribers.mockReturnValueOnce(['service2']);
 
-            // Spy on the handlePublish method
-            const handlePublishSpy = jest.spyOn(messageRouter as any, 'handlePublish');
-
             // Route the message
-            messageRouter.routeMessage('service1', message);
+            messageRouter.routeMessage('service1', parser);
 
-            // Verify handlePublish was called with correct parameters
-            expect(handlePublishSpy).toHaveBeenCalledWith('service1', message);
+            // Verify message was forwarded to subscribers
+            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
+                'service2',
+                expect.objectContaining({
+                    action: ActionType.PUBLISH,
+                    topic: 'test.topic',
+                }),
+                expect.any(Object),
+                undefined
+            );
         });
 
-        it('should call handleRequest when action is REQUEST', () => {
+        /**
+         * Tests handling of REQUEST messages by verifying they are properly
+         * forwarded to the selected subscriber.
+         */
+        it('should handle REQUEST action', () => {
             // Setup test message with REQUEST action
-            const message: Message = {
-                header: {
+            const requestId = randomUUID();
+            const header: ClientHeader = {
+                action: ActionType.REQUEST,
+                topic: 'test.topic',
+                version: '1.0.0',
+                requestId
+            };
+            const payload = {};
+            const message = serialize(header, payload);
+            const parser = new Parser(Buffer.from(message));
+
+            // Mock subscribers for the topic
+            mockSubscriptionManager.getTopSubscribers.mockReturnValueOnce(['service2']);
+
+            // Route the message
+            messageRouter.routeMessage('service1', parser);
+
+            // Verify request was forwarded to top subscriber
+            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
+                'service2',
+                expect.objectContaining({
                     action: ActionType.REQUEST,
                     topic: 'test.topic',
-                    version: '1.0.0',
-                    requestid: 'req-1'
-                },
-                payload: {}
-            };
-
-            // Spy on the handleRequest method
-            const handleRequestSpy = jest.spyOn(messageRouter as any, 'handleRequest');
-
-            // Route the message
-            messageRouter.routeMessage('service1', message);
-
-            // Verify handleRequest was called with correct parameters
-            expect(handleRequestSpy).toHaveBeenCalledWith('service1', message);
+                    requestId: expect.any(String)
+                }),
+                expect.any(Object),
+                requestId
+            );
         });
 
-        it('should call handleResponse when action is RESPONSE', () => {
-            // Setup test message with RESPONSE action
-            const message: Message = {
-                header: {
+        /**
+         * Tests handling of RESPONSE messages by verifying they are properly
+         * routed back to the original requester.
+         */
+        it('should handle RESPONSE action', () => {
+            // Create a request first
+            const originServiceId = 'service1';
+            const targetServiceId = 'service2';
+            const requestId = randomUUID();
+            const targetRequestId = randomUUID();
+            const originalHeader: ClientHeader = {
+                action: ActionType.REQUEST,
+                topic: 'test.topic',
+                version: '1.0.0',
+                requestId
+            };
+
+            // Add the request to the router's request map
+            const request = {
+                originServiceId,
+                targetServiceId,
+                targetRequestId,
+                originalHeader,
+                createdAt: new Date()
+            };
+            (messageRouter as any).requests.set(`${targetServiceId}:${targetRequestId}`, request);
+
+            // Now test the response
+            const header: BrokerHeader = {
+                action: ActionType.RESPONSE,
+                topic: 'test.topic',
+                version: '1.0.0',
+                requestId: targetRequestId,
+                parentRequestId: requestId
+            };
+            const payload = { data: 'test' };
+            const message = serialize(header, payload);
+            const parser = new Parser(Buffer.from(message));
+
+            messageRouter.routeMessage(targetServiceId, parser);
+
+            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
+                originServiceId,
+                expect.objectContaining({
                     action: ActionType.RESPONSE,
+                    requestId: requestId,
                     topic: 'test.topic',
-                    version: '1.0.0',
-                    requestid: 'req-1'
-                },
-                payload: {}
-            };
-
-            // Spy on the handleResponse method
-            const handleResponseSpy = jest.spyOn(messageRouter as any, 'handleResponse');
-
-            // Route the message
-            messageRouter.routeMessage('service1', message);
-
-            // Verify handleResponse was called with correct parameters
-            expect(handleResponseSpy).toHaveBeenCalledWith('service1', message);
+                    version: '1.0.0'
+                }),
+                expect.any(Object),
+                undefined
+            );
         });
 
-        it('should send an error response for unknown action type', () => {
-            // Setup test message with unknown action
-            const message: Message = {
-                header: {
-                    action: 'unknown' as ActionType,
-                    topic: 'test.topic',
-                    version: '1.0.0',
-                },
-                payload: {},
+        /**
+         * Tests error handling in PUBLISH action by verifying error metrics
+         * are properly incremented.
+         */
+        it('should handle errors in PUBLISH action and increment error metrics', () => {
+            // Setup test message with PUBLISH action
+            const header: ClientHeader = {
+                action: ActionType.PUBLISH,
+                topic: 'test.topic',
+                version: '1.0.0',
+            };
+            const payload = { data: 'test' };
+            const message = serialize(header, payload);
+            const parser = new Parser(Buffer.from(message));
+
+            // Mock getSubscribers to throw an error
+            mockSubscriptionManager.getSubscribers.mockImplementationOnce(() => {
+                throw new Error('Test error');
+            });
+
+            // Get initial error metric values
+            const metrics = (messageRouter as any).metrics;
+            const initialPublishErrors = metrics.publishCountError.slot.value;
+            const initialMessageErrors = metrics.messageCountError.slot.value;
+
+            // Route the message and expect error
+            expect(() => messageRouter.routeMessage('service1', parser)).toThrow('Test error');
+
+            // Verify error metrics were incremented
+            expect(metrics.publishCountError.slot.value).toBe(initialPublishErrors + 1);
+            expect(metrics.messageCountError.slot.value).toBe(initialMessageErrors + 1);
+        });
+
+        /**
+         * Tests error handling in REQUEST action by verifying error metrics
+         * are properly incremented.
+         */
+        it('should handle errors in REQUEST action and increment error metrics', () => {
+            // Setup test message with REQUEST action
+            const header: ClientHeader = {
+                action: ActionType.REQUEST,
+                topic: 'test.topic',
+                version: '1.0.0',
+                requestId: randomUUID()
+            };
+            const payload = { data: 'test' };
+            const message = serialize(header, payload);
+            const parser = new Parser(Buffer.from(message));
+
+            // Mock getTopSubscribers to throw an error
+            mockSubscriptionManager.getTopSubscribers.mockImplementationOnce(() => {
+                throw new Error('Test error');
+            });
+
+            // Get initial error metric values
+            const metrics = (messageRouter as any).metrics;
+            const initialRequestErrors = metrics.requestCountError.slot.value;
+            const initialMessageErrors = metrics.messageCountError.slot.value;
+
+            // Route the message and expect error
+            expect(() => messageRouter.routeMessage('service1', parser)).toThrow('Test error');
+
+            // Verify error metrics were incremented
+            expect(metrics.requestCountError.slot.value).toBe(initialRequestErrors + 1);
+            expect(metrics.messageCountError.slot.value).toBe(initialMessageErrors + 1);
+        });
+
+        /**
+         * Tests error handling in RESPONSE action by verifying error metrics
+         * are properly incremented.
+         */
+        it('should handle errors in RESPONSE action and increment error metrics', () => {
+            // Setup test message with RESPONSE action
+            const header: BrokerHeader = {
+                action: ActionType.RESPONSE,
+                topic: 'test.topic',
+                version: '1.0.0',
+                requestId: randomUUID()
+            };
+            const payload = { data: 'test' };
+            const message = serialize(header, payload);
+            const parser = new Parser(Buffer.from(message));
+
+            // Get initial error metric values
+            const metrics = (messageRouter as any).metrics;
+            const initialResponseErrors = metrics.responseCountError.slot.value;
+            const initialMessageErrors = metrics.messageCountError.slot.value;
+
+            // Route the message and expect error (since no request exists)
+            expect(() => messageRouter.routeMessage('service1', parser)).toThrow(InvalidRequestIdError);
+
+            // Verify error metrics were incremented
+            expect(metrics.responseCountError.slot.value).toBe(initialResponseErrors + 1);
+            expect(metrics.messageCountError.slot.value).toBe(initialMessageErrors + 1);
+        });
+
+        /**
+         * Tests handling of unknown action types by verifying an appropriate
+         * error response is sent.
+         */
+        it('should handle unknown action types with error response', () => {
+            // Create a parser with an unknown action type by bypassing validation
+            const parser = new Parser(Buffer.from('publish:test.topic:1.0.0\n{"data":"test"}'));
+            // Override the header after parsing
+            parser.header = {
+                action: 'UNKNOWN_ACTION' as ActionType,
+                topic: 'test.topic',
+                version: '1.0.0'
             };
 
+            // Get initial error metric values
+            const metrics = (messageRouter as any).metrics;
+            const initialMessageErrors = metrics.messageCountError.slot.value;
+
             // Route the message
-            messageRouter.routeMessage('service1', message);
+            messageRouter.routeMessage('service1', parser);
+
+            // Verify error metrics were incremented
+            expect(metrics.messageCountError.slot.value).toBe(initialMessageErrors + 1);
 
             // Verify error response was sent
             expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
                 'service1',
                 expect.objectContaining({
                     action: ActionType.RESPONSE,
-                    topic: 'test.topic',
                 }),
                 expect.objectContaining({
                     error: expect.objectContaining({
-                        code: 'MALFORMED_MESSAGE',
-                        message: 'Unknown action type: unknown'
+                        message: expect.stringContaining('Unknown action type')
                     })
-                })
+                }),
+                undefined
             );
         });
-    });
 
-    describe('handlePublish', () => {
-        it('should publish a message to all subscribers', () => {
-            // Setup test publish message
-            const message: Message = {
-                header: {
-                    action: ActionType.PUBLISH,
-                    topic: 'test.topic',
-                    version: '1.0.0',
-                },
-                payload: { data: 'test' },
-            };
-
-            // Mock multiple subscribers for the topic
-            mockSubscriptionManager.getSubscribers.mockReturnValue(['service2', 'service3']);
-
-            // Publish the message
-            messageRouter.routeMessage('service1', message);
-
-            // Verify subscribers were retrieved for the correct topic
-            expect(mockSubscriptionManager.getSubscribers).toHaveBeenCalledWith('test.topic');
-
-            // Verify message was forwarded to each subscriber
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith('service2', expect.objectContaining({
+        /**
+         * Tests handling of PUBLISH messages with no subscribers by verifying
+         * an appropriate error response is sent.
+         */
+        it('should handle PUBLISH with no subscribers by sending error response', () => {
+            // Setup test message with PUBLISH action
+            const header: ClientHeader = {
+                action: ActionType.PUBLISH,
                 topic: 'test.topic',
-                requestid: undefined
-            }), { data: 'test' });
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith('service3', expect.objectContaining({
-                topic: 'test.topic',
-                requestid: undefined
-            }), { data: 'test' });
-
-            // Verify logging
-            expect(logger.info).toHaveBeenCalledWith(`Publishing message to topic: test.topic for service: service1`);
-        });
-
-        it('should send an error response if no subscribers are found', () => {
-            // Setup test publish message with request ID
-            const message: Message = {
-                header: {
-                    action: ActionType.PUBLISH,
-                    topic: 'test.topic',
-                    version: '1.0.0',
-                    requestid: 'req-1'
-                },
-                payload: { data: 'test' },
+                version: '1.0.0',
+                requestId: randomUUID()
             };
+            const payload = { data: 'test' };
+            const message = serialize(header, payload);
+            const parser = new Parser(Buffer.from(message));
 
-            // Mock no subscribers for the topic
-            mockSubscriptionManager.getSubscribers.mockReturnValue([]);
+            // Mock getSubscribers to return empty array
+            mockSubscriptionManager.getSubscribers.mockReturnValueOnce([]);
 
-            // Publish the message
-            messageRouter.routeMessage('service1', message);
+            // Get initial metric values
+            const metrics = (messageRouter as any).metrics;
+            const initialDropped = metrics.publishCountDropped.slot.value;
 
-            // Verify error response was sent back to publisher
+            // Route the message
+            messageRouter.routeMessage('service1', parser);
+
+            // Verify dropped metrics were incremented
+            expect(metrics.publishCountDropped.slot.value).toBe(initialDropped + 1);
+
+            // Verify error response was sent
             expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
                 'service1',
                 expect.objectContaining({
                     action: ActionType.RESPONSE,
-                    requestid: 'req-1'
+                    requestId: header.requestId
                 }),
                 expect.objectContaining({
                     error: expect.objectContaining({
-                        code: 'NO_ROUTE_FOUND',
-                        message: 'No subscribers for topic test.topic'
+                        message: expect.stringContaining('No subscribers for topic')
                     })
-                })
+                }),
+                undefined
             );
         });
 
-        it('should send a success response to the publisher if requestid is present', () => {
-            // Setup test publish message with request ID
-            const message: Message = {
-                header: {
-                    action: ActionType.PUBLISH,
-                    topic: 'test.topic',
-                    version: '1.0.0',
-                    requestid: 'req-1'
-                },
-                payload: { data: 'test' },
+        /**
+         * Tests handling of PUBLISH messages with requestId by verifying
+         * a success response is sent back to the publisher.
+         */
+        it('should handle PUBLISH with requestId by sending success response', () => {
+            // Setup test message with PUBLISH action and requestId
+            const header: ClientHeader = {
+                action: ActionType.PUBLISH,
+                topic: 'test.topic',
+                version: '1.0.0',
+                requestId: randomUUID()
             };
+            const payload = { data: 'test' };
+            const message = serialize(header, payload);
+            const parser = new Parser(Buffer.from(message));
 
             // Mock subscribers for the topic
-            mockSubscriptionManager.getSubscribers.mockReturnValue(['service2']);
+            mockSubscriptionManager.getSubscribers.mockReturnValueOnce(['service2']);
 
-            // Publish the message
-            messageRouter.routeMessage('service1', message);
+            // Route the message
+            messageRouter.routeMessage('service1', parser);
+
+            // Verify message was forwarded to subscribers
+            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
+                'service2',
+                expect.objectContaining({
+                    action: ActionType.PUBLISH,
+                    topic: 'test.topic',
+                }),
+                expect.any(Object),
+                header.requestId
+            );
 
             // Verify success response was sent back to publisher
             expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
                 'service1',
                 expect.objectContaining({
                     action: ActionType.RESPONSE,
-                    requestid: 'req-1'
+                    requestId: header.requestId
                 }),
-                { status: 'success' }
+                { status: 'success' },
+                undefined
             );
-
-            // Verify logging
-            expect(logger.info).toHaveBeenCalledWith(`Sent publish response to service: service1 for request: req-1`);
         });
-    });
 
-    describe('handleRequest', () => {
-        it('should forward a request to the chosen subscriber and add the request to the requests map', () => {
-            // Setup test request message
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'test.topic',
-                    version: '1.0.0',
-                    requestid: 'req-1'
-                },
-                payload: { data: 'test' }
+        /**
+         * Tests handling of REQUEST messages with no subscribers by verifying
+         * a NoRouteFoundError is thrown.
+         */
+        it('should handle REQUEST with no subscribers by throwing NoRouteFoundError', () => {
+            // Setup test message with REQUEST action
+            const header: ClientHeader = {
+                action: ActionType.REQUEST,
+                topic: 'test.topic',
+                version: '1.0.0',
+                requestId: randomUUID()
             };
+            const payload = { data: 'test' };
+            const message = serialize(header, payload);
+            const parser = new Parser(Buffer.from(message));
 
-            // Mock single subscriber for the topic
+            // Mock getTopSubscribers to return empty array
+            mockSubscriptionManager.getTopSubscribers.mockReturnValueOnce([]);
+
+            // Get initial metric values
+            const metrics = (messageRouter as any).metrics;
+            const initialRequestErrors = metrics.requestCountError.slot.value;
+            const initialMessageErrors = metrics.messageCountError.slot.value;
+
+            // Route the message and expect error
+            expect(() => messageRouter.routeMessage('service1', parser)).toThrow('No subscribers for topic');
+
+            // Verify error metrics were incremented
+            expect(metrics.requestCountError.slot.value).toBe(initialRequestErrors + 1);
+            expect(metrics.messageCountError.slot.value).toBe(initialMessageErrors + 1);
+        });
+
+        /**
+         * Tests handling of system messages in REQUEST action by verifying
+         * they are properly delegated to the ServiceRegistry.
+         */
+        it('should handle system messages in REQUEST action by delegating to ServiceRegistry', () => {
+            // Setup test message with REQUEST action and system topic
+            const header: ClientHeader = {
+                action: ActionType.REQUEST,
+                topic: 'system.test',
+                version: '1.0.0',
+                requestId: randomUUID()
+            };
+            const payload = { data: 'test' };
+            const message = serialize(header, payload);
+            const parser = new Parser(Buffer.from(message));
+
+            // Route the message
+            messageRouter.routeMessage('service1', parser);
+
+            // Verify heartbeat was reset
+            expect(mockServiceRegistry.resetHeartbeat).toHaveBeenCalledWith('service1');
+
+            // Verify message was delegated to ServiceRegistry
+            expect(mockServiceRegistry.handleSystemMessage).toHaveBeenCalledWith('service1', parser);
+
+            // Verify no other handlers were called
+            expect(mockSubscriptionManager.getTopSubscribers).not.toHaveBeenCalled();
+            expect(mockConnectionManager.sendMessage).not.toHaveBeenCalled();
+        });
+
+        /**
+         * Tests handling of maximum outstanding requests by verifying the oldest
+         * request is evicted and appropriate error responses are sent.
+         */
+        it('should handle maximum outstanding requests by sending error response', () => {
+            // Mock the config to have a lower max outstanding requests value for testing
+            const originalMaxRequests = config.max.outstanding.requests;
+            config.max.outstanding.requests = 2;
+
+            // Setup test message with REQUEST action
+            const header: ClientHeader = {
+                action: ActionType.REQUEST,
+                topic: 'test.topic',
+                version: '1.0.0',
+                requestId: randomUUID()
+            };
+            const payload = { data: 'test' };
+            const message = serialize(header, payload);
+            const parser = new Parser(Buffer.from(message));
+
+            // Mock subscribers for the topic
             mockSubscriptionManager.getTopSubscribers.mockReturnValueOnce(['service2']);
 
-            // Send the request
-            messageRouter.routeMessage('service1', message);
+            // Fill up the requests map to max capacity
+            const requests = (messageRouter as any).requests;
+            for (let i = 0; i < config.max.outstanding.requests; i++) {
+                const requestId = randomUUID();
+                requests.set(`service${i}:${requestId}`, {
+                    originServiceId: `service${i}`,
+                    targetServiceId: 'service2',
+                    targetRequestId: requestId,
+                    originalHeader: {
+                        action: ActionType.REQUEST,
+                        requestId: requestId,
+                        topic: 'test.topic',
+                        version: '1.0.0'
+                    },
+                    createdAt: new Date()
+                });
+            }
 
-            // Verify request was forwarded to subscriber
+            // Get initial metric values
+            const metrics = (messageRouter as any).metrics;
+            const initialDropped = metrics.requestCountDropped.slot.value;
+
+            // Route the message
+            messageRouter.routeMessage('service1', parser);
+
+            // Verify dropped metrics were incremented
+            expect(metrics.requestCountDropped.slot.value).toBe(initialDropped + 1);
+
+            // Verify error response was sent to the owner of the oldest request
+            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
+                'service0',
+                expect.objectContaining({
+                    action: ActionType.RESPONSE
+                }),
+                expect.objectContaining({
+                    error: expect.objectContaining({
+                        message: expect.stringContaining('Message broker is busy')
+                    })
+                }),
+                undefined
+            );
+
+            // Verify the new request was added
             expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
                 'service2',
                 expect.objectContaining({
                     action: ActionType.REQUEST,
                     topic: 'test.topic'
                 }),
-                { data: 'test' }
+                expect.any(Object),
+                header.requestId
             );
 
-            // Get the generated request ID from the forwarded message
-            const sentMessage = (mockConnectionManager.sendMessage as jest.Mock).mock.calls[0][1] as Header;
-            const sentRequestId = sentMessage.requestid;
-
-            // Verify request was stored in the requests map
-            const request = (messageRouter as any).getRequest('service2', sentRequestId);
-            expect(request).toBeDefined();
-            expect(request.originServiceId).toBe('service1');
-            expect(request.originalHeader.requestid).toBe('req-1');
+            // Restore the original config
+            config.max.outstanding.requests = originalMaxRequests;
         });
 
-        it('should remove the oldest request and send a SERVICE_UNAVAILABLE error if the maximum number of outstanding requests is reached', () => {
-            // Set maximum number of outstanding requests
-            const maxRequests = 5;
-            config.max.outstanding.requests = maxRequests;
-            const topic = 'test.topic';
+        /**
+         * Tests handling of system message responses by verifying they are
+         * properly delegated to the ServiceRegistry.
+         */
+        it('should handle system message responses by delegating to ServiceRegistry', () => {
+            // Setup test message with RESPONSE action and system topic
+            const header: BrokerHeader = {
+                action: ActionType.RESPONSE,
+                topic: 'system.test',
+                version: '1.0.0',
+                requestId: randomUUID()
+            };
+            const payload = { data: 'test' };
+            const message = serialize(header, payload);
+            const parser = new Parser(Buffer.from(message));
 
-            // Mock subscriber for all requests
-            mockSubscriptionManager.getTopSubscribers.mockReturnValue(['service2']);
+            // Route the message
+            messageRouter.routeMessage('service1', parser);
 
-            // Create more requests than the maximum allowed
-            for (let i = 0; i < maxRequests + 1; i++) {
-                const message: Message = {
-                    header: {
-                        action: ActionType.REQUEST,
-                        topic: topic,
-                        version: '1.0.0',
-                        requestid: `req-${i}`
-                    },
-                    payload: {}
-                };
-                messageRouter.routeMessage(`service${i}`, message);
-            }
+            // Verify heartbeat was reset
+            expect(mockServiceRegistry.resetHeartbeat).toHaveBeenCalledWith('service1');
 
-            // Verify SERVICE_UNAVAILABLE error was sent for the oldest request
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                'service0',
-                expect.objectContaining({
-                    action: ActionType.RESPONSE,
-                    requestid: undefined
-                }),
-                expect.objectContaining({
-                    error: expect.objectContaining({
-                        code: 'SERVICE_UNAVAILABLE',
-                        message: expect.any(String)
-                    })
-                })
-            );
+            // Verify message was delegated to ServiceRegistry
+            expect(mockServiceRegistry.handleSystemMessage).toHaveBeenCalledWith('service1', parser);
+
+            // Verify no other handlers were called
+            expect(mockConnectionManager.sendMessage).not.toHaveBeenCalled();
         });
 
-        it('should send an error response if no subscribers are found', () => {
-            // Setup test request message
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'test.topic',
-                    version: '1.0.0',
-                    requestid: 'req-1'
-                },
-                payload: {}
+        /**
+         * Tests error handling when a RESPONSE has no requestId by verifying
+         * an appropriate error is thrown.
+         */
+        it('should throw error when RESPONSE has no requestId', () => {
+            // Setup test message with RESPONSE action but no requestId
+            const header: BrokerHeader = {
+                action: ActionType.RESPONSE,
+                topic: 'test.topic',
+                version: '1.0.0'
+            };
+            const payload = { data: 'test' };
+            const message = serialize(header, payload);
+            const parser = new Parser(Buffer.from(message));
+
+            // Get initial error metric values
+            const metrics = (messageRouter as any).metrics;
+            const initialResponseErrors = metrics.responseCountError.slot.value;
+            const initialMessageErrors = metrics.messageCountError.slot.value;
+
+            // Route the message and expect error
+            expect(() => messageRouter.routeMessage('service1', parser)).toThrow('Received response message without requestId');
+
+            // Verify error metrics were incremented
+            expect(metrics.responseCountError.slot.value).toBe(initialResponseErrors + 1);
+            expect(metrics.messageCountError.slot.value).toBe(initialMessageErrors + 1);
+        });
+
+        /**
+         * Tests handling of error responses by verifying error metrics are
+         * properly incremented.
+         */
+        it('should handle error responses and increment error metrics', () => {
+            // Create a request first
+            const originServiceId = 'service1';
+            const targetServiceId = 'service2';
+            const requestId = randomUUID();
+            const targetRequestId = randomUUID();
+            const originalHeader: ClientHeader = {
+                action: ActionType.REQUEST,
+                topic: 'test.topic',
+                version: '1.0.0',
+                requestId
             };
 
-            // Mock no subscribers for the topic
-            mockSubscriptionManager.getTopSubscribers.mockReturnValue([]);
+            // Add the request to the router's request map
+            const request = {
+                originServiceId,
+                targetServiceId,
+                targetRequestId,
+                originalHeader,
+                createdAt: new Date()
+            };
+            (messageRouter as any).requests.set(`${targetServiceId}:${targetRequestId}`, request);
 
-            // Send the request
-            messageRouter.routeMessage('service1', message);
+            // Now test the error response
+            const header: BrokerHeader = {
+                action: ActionType.RESPONSE,
+                topic: 'test.topic',
+                version: '1.0.0',
+                requestId: targetRequestId
+            };
+            const payload = { error: { code: 'TEST_ERROR', message: 'Test error', timestamp: new Date().toISOString() } };
+            const message = serialize(header, payload);
+            const parser = new Parser(Buffer.from(message));
+            // Force error flag
+            (parser as any).error = true;
 
-            // Verify error response was sent back to requester
+            // Get initial error metrics
+            const metrics = (messageRouter as any).metrics;
+            const initialResponseErrors = metrics.responseCountError.slot.value;
+
+            // Route the message
+            messageRouter.routeMessage(targetServiceId, parser);
+
+            // Verify error metrics were incremented
+            expect(metrics.responseCountError.slot.value).toBe(initialResponseErrors + 1);
+        });
+
+        /**
+         * Tests handling of responses without original requestId by verifying
+         * appropriate logging behavior.
+         */
+        it('should handle responses without original requestId by logging appropriately', () => {
+            // Create a request first
+            const originServiceId = 'service1';
+            const targetServiceId = 'service2';
+            const targetRequestId = randomUUID();
+            const originalHeader: ClientHeader = {
+                action: ActionType.REQUEST,
+                topic: 'test.topic',
+                version: '1.0.0'
+                // No requestId
+            };
+
+            // Add the request to the router's request map
+            const request = {
+                originServiceId,
+                targetServiceId,
+                targetRequestId,
+                originalHeader,
+                createdAt: new Date()
+            };
+            (messageRouter as any).requests.set(`${targetServiceId}:${targetRequestId}`, request);
+
+            // Now test the response with an error
+            const header: BrokerHeader = {
+                action: ActionType.RESPONSE,
+                topic: 'test.topic',
+                version: '1.0.0',
+                requestId: targetRequestId
+            };
+            const payload = { error: { code: 'TEST_ERROR', message: 'Test error', timestamp: new Date().toISOString() } };
+            const message = serialize(header, payload);
+            const parser = new Parser(Buffer.from(message));
+            // Force error flag
+            (parser as any).error = true;
+
+            // Route the message
+            messageRouter.routeMessage(targetServiceId, parser);
+
+            // Verify appropriate logging
+            expect(logger.debug).toHaveBeenCalledWith(
+                `Sent request response to service: ${originServiceId}`
+            );
+            expect(logger.debug).not.toHaveBeenCalledWith(
+                expect.stringContaining(`for request:`)
+            );
+        });
+
+        /**
+         * Tests handling of request timeouts by verifying appropriate error
+         * responses are sent and metrics are updated.
+         */
+        it('should handle request timeouts by sending error response', () => {
+            // Mock timers
+            jest.useFakeTimers();
+
+            // Setup test message with REQUEST action
+            const header: ClientHeader = {
+                action: ActionType.REQUEST,
+                topic: 'test.topic',
+                version: '1.0.0',
+                requestId: randomUUID(),
+                timeout: 1000 // 1 second timeout
+            };
+            const payload = { data: 'test' };
+            const message = serialize(header, payload);
+            const parser = new Parser(Buffer.from(message));
+
+            // Mock subscribers for the topic
+            mockSubscriptionManager.getTopSubscribers.mockReturnValueOnce(['service2']);
+
+            // Get initial metric values
+            const metrics = (messageRouter as any).metrics;
+            const initialTimeouts = metrics.requestCountTimeout.slot.value;
+
+            // Route the message
+            messageRouter.routeMessage('service1', parser);
+
+            // Fast forward past the timeout
+            jest.advanceTimersByTime(1001);
+
+            // Verify timeout metrics were incremented
+            expect(metrics.requestCountTimeout.slot.value).toBe(initialTimeouts + 1);
+
+            // Verify timeout error was sent
             expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
                 'service1',
                 expect.objectContaining({
                     action: ActionType.RESPONSE,
-                    requestid: 'req-1'
+                    requestId: header.requestId
                 }),
                 expect.objectContaining({
                     error: expect.objectContaining({
-                        code: 'NO_ROUTE_FOUND',
-                        message: 'No subscribers for topic test.topic'
+                        message: expect.stringContaining('Request timed out')
                     })
-                })
-            );
-        });
-
-        it('should randomly select a subscriber when multiple subscribers have the same priority', () => {
-            // Mock Math.random to return a predictable value
-            const mockRandom = jest.spyOn(Math, 'random').mockReturnValue(0.5);
-
-            // Mock multiple subscribers
-            mockSubscriptionManager.getTopSubscribers.mockReturnValue(['service1', 'service2', 'service3']);
-
-            // Create request message
-            const requestMessage: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'test.topic',
-                    version: '1.0.0',
-                    requestid: 'req-123'
-                },
-                payload: { data: 'test' }
-            };
-
-            // Route message
-            messageRouter.routeMessage('origin-service', requestMessage);
-
-            // Verify message was sent to the "randomly" selected service (index 1 with Math.random = 0.5)
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                'service2',  // Second service in the array
-                expect.any(Object),
-                expect.any(Object)
-            );
-
-            // Clean up
-            mockRandom.mockRestore();
-        });
-
-        it('should remove timeout from payload before forwarding request', () => {
-            // Mock a target service
-            mockSubscriptionManager.getTopSubscribers.mockReturnValue(['target-service']);
-
-            // Create request message with timeout
-            const requestMessage: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'test.topic',
-                    version: '1.0.0',
-                    requestid: 'req-123'
-                },
-                payload: {
-                    data: 'test',
-                    timeout: 5000
-                }
-            };
-
-            // Route message
-            messageRouter.routeMessage('origin-service', requestMessage);
-
-            // Verify forwarded message doesn't include timeout
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                'target-service',
-                expect.any(Object),
-                expect.not.objectContaining({
-                    timeout: expect.any(Number)
-                })
-            );
-        });
-
-        it('should generate request with timeout when requestid is present', () => {
-            jest.useFakeTimers();
-
-            // Mock a target service
-            mockSubscriptionManager.getTopSubscribers.mockReturnValue(['target-service']);
-
-            // Create request message with requestid and custom timeout
-            const requestMessage: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'test.topic',
-                    version: '1.0.0',
-                    requestid: 'req-123'
-                },
-                payload: {
-                    data: 'test',
-                    timeout: 5000
-                }
-            };
-
-            // Route message
-            messageRouter.routeMessage('origin-service', requestMessage);
-
-            // Fast forward past the timeout
-            jest.advanceTimersByTime(5000);
-
-            // Verify timeout error was sent
-            expect(mockConnectionManager.sendMessage).toHaveBeenLastCalledWith(
-                'origin-service',
-                expect.objectContaining({
-                    action: ActionType.RESPONSE,
-                    requestid: 'req-123'
                 }),
-                expect.objectContaining({
-                    error: expect.objectContaining({
-                        code: 'TIMEOUT'
-                    })
-                })
+                undefined
             );
 
+            // Cleanup
             jest.useRealTimers();
         });
 
-        it('should generate request without timeout when requestid is not present', () => {
-            jest.useFakeTimers();
+        /**
+         * Tests eviction of oldest request when maximum outstanding requests
+         * is reached during request generation.
+         */
+        it('should evict oldest request when max outstanding requests is reached during request generation', () => {
+            // Mock the config to have a lower max outstanding requests value for testing
+            const originalMaxRequests = config.max.outstanding.requests;
+            config.max.outstanding.requests = 2;
 
-            // Mock a target service
-            mockSubscriptionManager.getTopSubscribers.mockReturnValue(['target-service']);
-
-            // Create request message without requestid
-            const requestMessage: Message = {
-                header: {
+            // Set up the oldest request
+            const oldRequestId = randomUUID();
+            const oldRequest = {
+                originServiceId: 'service0',
+                targetServiceId: 'service2',
+                targetRequestId: oldRequestId,
+                originalHeader: {
                     action: ActionType.REQUEST,
+                    requestId: oldRequestId,
                     topic: 'test.topic',
                     version: '1.0.0'
                 },
-                payload: {
-                    data: 'test',
-                    timeout: 5000
-                }
+                createdAt: new Date(Date.now() - 1000) // 1 second ago
             };
 
-            // Route message
-            messageRouter.routeMessage('origin-service', requestMessage);
+            // Set up the requests map
+            const requests = (messageRouter as any).requests;
+            requests.set(`service2:${oldRequestId}`, oldRequest);
 
-            // Verify message was forwarded without setting up a timeout
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                'target-service',
-                expect.objectContaining({
-                    action: ActionType.REQUEST
-                }),
-                expect.objectContaining({
-                    data: 'test'
-                })
-            );
-
-            // Fast forward to verify no timeout was set
-            jest.advanceTimersByTime(5000);
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledTimes(1);
-
-            jest.useRealTimers();
-        });
-    });
-
-    describe('handleResponse', () => {
-        it('should forward a response to the original requester and remove the request from the map', () => {
-            // Setup initial request tracking
-            const originalRequestId = 'req-1';
-            const targetRequestId = 'req-2';
-            const request: Request = {
-                originServiceId: 'service1',
+            // Add one more recent request
+            const recentRequestId = randomUUID();
+            requests.set(`service3:${recentRequestId}`, {
+                originServiceId: 'service3',
                 targetServiceId: 'service2',
-                originalRequestId: originalRequestId,
-                targetRequestId: targetRequestId,
+                targetRequestId: recentRequestId,
                 originalHeader: {
                     action: ActionType.REQUEST,
+                    requestId: recentRequestId,
                     topic: 'test.topic',
-                    version: '1.0.0',
-                    requestid: originalRequestId
+                    version: '1.0.0'
                 },
                 createdAt: new Date()
+            });
+
+            // Get initial metric values
+            const metrics = (messageRouter as any).metrics;
+            const initialDropped = metrics.requestCountDropped.slot.value;
+
+            // Set up the new request that will trigger eviction
+            const header: ClientHeader = {
+                action: ActionType.REQUEST,
+                topic: 'test.topic',
+                version: '1.0.0',
+                requestId: randomUUID()
             };
+            const payload = { data: 'test' };
+            const message = serialize(header, payload);
+            const parser = new Parser(Buffer.from(message));
 
-            // Store the request in the requests map
-            (messageRouter as any).requests.set('service2:req-2', request);
+            // Mock subscribers for the topic
+            mockSubscriptionManager.getTopSubscribers.mockReturnValueOnce(['service2']);
 
-            // Setup response message
-            const responseMessage: Message = {
-                header: {
-                    action: ActionType.RESPONSE,
-                    topic: 'test.topic',
-                    version: '1.0.0',
-                    requestid: targetRequestId
-                },
-                payload: { result: 'success' }
-            };
+            // Route the message
+            messageRouter.routeMessage('service1', parser);
 
-            // Send the response
-            messageRouter.routeMessage('service2', responseMessage);
+            // Verify dropped metrics were incremented
+            expect(metrics.requestCountDropped.slot.value).toBe(initialDropped + 1);
 
-            // Verify response was forwarded to original requester
+            // Verify error response was sent to the owner of the evicted request
             expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                'service1',
-                expect.objectContaining({
-                    action: ActionType.RESPONSE,
-                    requestid: originalRequestId
-                }),
-                { result: 'success' }
-            );
-
-            // Verify request was removed from the map
-            expect((messageRouter as any).getRequest('service2', targetRequestId)).toBeUndefined();
-        });
-
-        it('should send an error response if no matching request is found', () => {
-            // Setup response message with unknown request ID
-            const responseMessage: Message = {
-                header: {
-                    action: ActionType.RESPONSE,
-                    topic: 'test.topic',
-                    version: '1.0.0',
-                    requestid: 'unknown-req'
-                },
-                payload: {}
-            };
-
-            // Send the response
-            messageRouter.routeMessage('service2', responseMessage);
-
-            // Verify error response was sent back
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                'service2',
-                expect.objectContaining({
-                    action: ActionType.RESPONSE,
-                    requestid: 'unknown-req'
-                }),
-                expect.objectContaining({
-                    error: expect.objectContaining({
-                        code: 'INVALID_REQUEST_ID',
-                        message: expect.stringContaining('No matching request found')
-                    })
-                })
-            );
-        });
-
-        it('should send an error response if the response is missing a request ID', () => {
-            // Setup response message without request ID
-            const responseMessage: Message = {
-                header: {
-                    action: ActionType.RESPONSE,
-                    topic: 'test.topic',
-                    version: '1.0.0',
-                    // Missing requestid
-                },
-                payload: {}
-            };
-
-            // Send the response
-            messageRouter.routeMessage('service2', responseMessage);
-
-            // Verify error response was sent back
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                'service2',
+                'service0',
                 expect.objectContaining({
                     action: ActionType.RESPONSE
                 }),
                 expect.objectContaining({
                     error: expect.objectContaining({
-                        code: 'INVALID_REQUEST_ID',
-                        message: expect.stringContaining('without requestId')
+                        message: expect.stringContaining('Message broker is busy')
                     })
-                })
-            );
-        });
-    });
-
-    describe('generateRequest', () => {
-        it('should add a new request to the requests map with a timeout', () => {
-            // Setup test parameters
-            jest.useFakeTimers();
-            const originServiceId = 'service1';
-            const targetServiceId = 'service2';
-            const originalHeader: Header = {
-                action: ActionType.REQUEST,
-                topic: 'test.topic',
-                version: '1.0.0',
-                requestid: 'req-1'
-            };
-            const timeout = 1000;
-
-            // Generate the request
-            const request = (messageRouter as any).generateRequest(originServiceId, targetServiceId, originalHeader, timeout);
-
-            // Verify request was stored correctly
-            const storedRequest = (messageRouter as any).getRequest(targetServiceId, request.targetRequestId);
-            expect(storedRequest).toBeDefined();
-            expect(storedRequest.originServiceId).toBe(originServiceId);
-            expect(storedRequest.targetServiceId).toBe(targetServiceId);
-            expect(storedRequest.originalHeader).toEqual(originalHeader);
-            expect(storedRequest.timeout).toBeDefined();
-
-            jest.useRealTimers();
-        });
-
-        it('should set a default timeout if no timeout is provided', () => {
-            // Setup test parameters
-            jest.useFakeTimers();
-            const originServiceId = 'service1';
-            const targetServiceId = 'service2';
-            const originalHeader: Header = {
-                action: ActionType.REQUEST,
-                topic: 'test.topic',
-                version: '1.0.0',
-                requestid: 'req-1'
-            };
-
-            // Generate the request without explicit timeout
-            const request = (messageRouter as any).generateRequest(originServiceId, targetServiceId, originalHeader);
-
-            // Verify request was stored with default timeout
-            const storedRequest = (messageRouter as any).getRequest(targetServiceId, request.targetRequestId);
-            expect(storedRequest).toBeDefined();
-            expect(storedRequest.timeout).toBeDefined();
-
-            jest.useRealTimers();
-        });
-    });
-
-    describe('getRequest', () => {
-        it('should return the request if it exists', () => {
-            // Setup test request
-            const request: Request = {
-                originServiceId: 'service1',
-                targetServiceId: 'service2',
-                originalRequestId: 'req-1',
-                targetRequestId: 'req-2',
-                originalHeader: {
-                    action: ActionType.REQUEST,
-                    topic: 'test.topic',
-                    version: '1.0.0',
-                    requestid: 'req-1'
-                },
-                createdAt: new Date()
-            };
-
-            // Store the request
-            (messageRouter as any).requests.set('service2:req-2', request);
-
-            // Verify request can be retrieved
-            const retrievedRequest = (messageRouter as any).getRequest('service2', 'req-2');
-            expect(retrievedRequest).toBe(request);
-        });
-
-        it('should return undefined if the request does not exist', () => {
-            // Attempt to retrieve non-existent request
-            const retrievedRequest = (messageRouter as any).getRequest('service2', 'req-2');
-            expect(retrievedRequest).toBeUndefined();
-        });
-    });
-
-    describe('removeRequest', () => {
-        it('should remove the request from the map and clear the timeout', () => {
-            // Setup test request with timeout
-            jest.useFakeTimers();
-            const request: Request = {
-                originServiceId: 'service1',
-                targetServiceId: 'service2',
-                originalRequestId: 'req-1',
-                targetRequestId: 'req-2',
-                originalHeader: {
-                    action: ActionType.REQUEST,
-                    topic: 'test.topic',
-                    version: '1.0.0',
-                    requestid: 'req-1'
-                },
-                timeout: setTimeout(() => {}, 1000),
-                createdAt: new Date()
-            };
-
-            // Store the request
-            (messageRouter as any).requests.set('service2:req-2', request);
-
-            // Remove the request
-            const result = (messageRouter as any).removeRequest('service2', 'req-2');
-            expect(result).toBe(true);
-
-            // Verify request was removed
-            const retrievedRequest = (messageRouter as any).getRequest('service2', 'req-2');
-            expect(retrievedRequest).toBeUndefined();
-
-            jest.useRealTimers();
-        });
-
-        it('should return false if the request does not exist', () => {
-            // Attempt to remove non-existent request
-            const result = (messageRouter as any).removeRequest('service2', 'req-2');
-            expect(result).toBe(false);
-        });
-    });
-
-    describe('generateRequestId', () => {
-        it('should generate a unique request ID', () => {
-            // Generate two request IDs
-            const requestId1 = (messageRouter as any).generateRequestId();
-            const requestId2 = (messageRouter as any).generateRequestId();
-
-            // Verify they are different
-            expect(requestId1).not.toBe(requestId2);
-        });
-    });
-
-    describe('clearRequests', () => {
-        it('should remove all requests from the map and clear timeouts', () => {
-            // Setup test requests with timeouts
-            jest.useFakeTimers();
-            const request1: Request = {
-                originServiceId: 'service1',
-                targetServiceId: 'service2',
-                originalRequestId: 'req-1',
-                targetRequestId: 'req-2',
-                originalHeader: {
-                    action: ActionType.REQUEST,
-                    topic: 'test.topic',
-                    version: '1.0.0',
-                    requestid: 'req-1'
-                },
-                timeout: setTimeout(() => {}, 1000),
-                createdAt: new Date()
-            };
-            const request2: Request = {
-                originServiceId: 'service3',
-                targetServiceId: 'service4',
-                originalRequestId: 'req-3',
-                targetRequestId: 'req-4',
-                originalHeader: {
-                    action: ActionType.REQUEST,
-                    topic: 'test.topic',
-                    version: '1.0.0',
-                    requestid: 'req-3'
-                },
-                timeout: setTimeout(() => {}, 1000),
-                createdAt: new Date()
-            };
-
-            // Store the requests
-            (messageRouter as any).requests.set('service2:req-2', request1);
-            (messageRouter as any).requests.set('service4:req-4', request2);
-
-            // Clear all requests
-            messageRouter.dispose();
-
-            // Verify all requests were removed
-            expect((messageRouter as any).getRequest('service2', 'req-2')).toBeUndefined();
-            expect((messageRouter as any).getRequest('service4', 'req-4')).toBeUndefined();
-
-            jest.useRealTimers();
-        });
-    });
-
-    describe('handleError', () => {
-        it('should handle error response without originalRequestId', () => {
-            // Create a request without originalRequestId
-            const request: Request = {
-                originServiceId: 'service1',
-                targetServiceId: 'service2',
-                targetRequestId: 'req-123',
-                originalHeader: {
-                    action: ActionType.REQUEST,
-                    topic: 'test.topic',
-                    version: '1.0.0'
-                },
-                createdAt: new Date()
-            };
-
-            // Add request to router
-            (messageRouter as any).requests.set('service2:req-123', request);
-
-            // Create error response message
-            const errorResponse: Message = {
-                header: {
-                    action: ActionType.RESPONSE,
-                    topic: 'test.topic',
-                    version: '1.0.0',
-                    requestid: 'req-123'
-                },
-                payload: {
-                    error: {
-                        code: 'TEST_ERROR',
-                        message: 'Test error',
-                        timestamp: new Date().toISOString()
-                    }
-                }
-            };
-
-            // Route error response
-            messageRouter.routeMessage('service2', errorResponse);
-
-            // Verify error response was sent
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                'service1',
-                expect.objectContaining({ action: ActionType.RESPONSE }),
-                expect.objectContaining({ error: expect.any(Object) })
-            );
-
-            // Verify warning was logged
-            expect(logger.warn).toHaveBeenCalledWith(
-                'Error received from service: service2 for request: req-123',
-                expect.any(Object)
-            );
-        });
-
-        it('should handle request timeout', async () => {
-            // Mock Date.now for consistent testing
-            const now = new Date();
-            jest.useFakeTimers();
-
-            // Create request message
-            const requestMessage: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'test.topic',
-                    version: '1.0.0',
-                    requestid: 'origin-req-123'
-                },
-                payload: { data: 'test' }
-            };
-
-            // Mock getTopSubscribers to return a target service
-            mockSubscriptionManager.getTopSubscribers.mockReturnValue(['target-service']);
-
-            // Route request message
-            messageRouter.routeMessage('origin-service', requestMessage);
-
-            // Fast forward past the timeout
-            jest.advanceTimersByTime(config.request.response.timeout.default + 100);
-
-            // Verify timeout error response was sent
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                'origin-service',
-                expect.objectContaining({
-                    action: ActionType.RESPONSE,
-                    requestid: 'origin-req-123'
                 }),
+                undefined
+            );
+
+            // Verify the old request was removed
+            expect(requests.has(`service2:${oldRequestId}`)).toBe(false);
+
+            // Verify the new request was added
+            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
+                'service2',
                 expect.objectContaining({
-                    error: expect.objectContaining({
-                        code: 'TIMEOUT',
-                        message: 'Request timed out'
-                    })
-                })
+                    action: ActionType.REQUEST,
+                    topic: 'test.topic'
+                }),
+                expect.any(Object),
+                header.requestId
             );
 
-            // Verify warning was logged
-            expect(logger.warn).toHaveBeenCalledWith(
-                expect.stringMatching(/^Request origin-service:origin-req-123 to target-service:.* timed out$/)
-            );
+            // Restore the original config
+            config.max.outstanding.requests = originalMaxRequests;
+        });
 
-            // Clean up
-            jest.useRealTimers();
+        /**
+         * Tests handling of request generation without requestId in the original
+         * header by verifying the request is created without a timeout.
+         */
+        it('should handle request generation without requestId in original header', () => {
+            // Setup test message with REQUEST action but no requestId
+            const header: ClientHeader = {
+                action: ActionType.REQUEST,
+                topic: 'test.topic',
+                version: '1.0.0'
+                // No requestId
+            };
+            const payload = { data: 'test' };
+            const message = serialize(header, payload);
+            const parser = new Parser(Buffer.from(message));
+
+            // Mock subscribers for the topic
+            mockSubscriptionManager.getTopSubscribers.mockReturnValueOnce(['service2']);
+
+            // Route the message
+            messageRouter.routeMessage('service1', parser);
+
+            // Get the request from the map
+            const requests = (messageRouter as any).requests;
+            const request = Array.from(requests.values())[0] as {
+                originServiceId: string;
+                targetServiceId: string;
+                targetRequestId: string;
+                originalHeader: ClientHeader;
+                timeout?: NodeJS.Timeout;
+                createdAt: Date;
+            };
+
+            // Verify request was created without a timeout
+            expect(request.timeout).toBeUndefined();
+
+            // Verify message was forwarded
+            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
+                'service2',
+                expect.objectContaining({
+                    action: ActionType.REQUEST,
+                    topic: 'test.topic'
+                }),
+                expect.any(Object),
+                undefined
+            );
         });
     });
 });

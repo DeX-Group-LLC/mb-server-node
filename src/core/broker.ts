@@ -7,6 +7,7 @@ import { ServiceRegistry } from '@core/registry';
 import { MessageRouter } from '@core/router';
 import { SubscriptionManager } from '@core/subscription';
 import { SetupLogger } from '@utils/logger';
+import { SystemManager } from './system/manager';
 
 const logger = SetupLogger('MessageBroker');
 
@@ -17,6 +18,7 @@ export class MessageBroker {
     private monitorManager: MonitoringManager;
     private subscriptionManager: SubscriptionManager;
     private serviceRegistry: ServiceRegistry;
+    private systemManager: SystemManager;
     private createdAt: Date;
 
     /**
@@ -24,10 +26,11 @@ export class MessageBroker {
      */
     constructor() {
         this.monitorManager = new MonitoringManager();
+        this.systemManager = new SystemManager(this.monitorManager);
         this.subscriptionManager = new SubscriptionManager();
-        this.messageRouter = new MessageRouter(this.subscriptionManager);
+        this.messageRouter = new MessageRouter(this.subscriptionManager, this.monitorManager);
         this.serviceRegistry = new ServiceRegistry(this.subscriptionManager, this.monitorManager);
-        this.connectionManager = new ConnectionManager(this.messageRouter, this.serviceRegistry, this.monitorManager);
+        this.connectionManager = new ConnectionManager(this.messageRouter, this.serviceRegistry, this.monitorManager, this.subscriptionManager);
         this.serviceRegistry.assignConnectionManager(this.connectionManager);
         this.messageRouter.assignConnectionManager(this.connectionManager);
         this.messageRouter.assignServiceRegistry(this.serviceRegistry);
@@ -67,6 +70,12 @@ export class MessageBroker {
                 }
             });
         });
+
+        // Dispose of system manager
+        this.systemManager.dispose();
+
+        // Dispose of monitoring manager
+        this.monitorManager.dispose();
 
         logger.info('Shutdown complete.');
     }

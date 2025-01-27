@@ -30,28 +30,38 @@ export class SubscriptionManager {
             return false;
         }
 
-        if (!this.subscriptions.has(canonicalTopic)) {
-            this.subscriptions.set(canonicalTopic, []);
+        let subscribers = this.subscriptions.get(canonicalTopic);
+        if (!subscribers) {
+            subscribers = [];
+            this.subscriptions.set(canonicalTopic, subscribers);
         }
 
-        const subscribers = this.subscriptions.get(canonicalTopic)!;
-
-        // Check if already subscribed
-        if (subscribers.some(sub => sub.serviceId === serviceId)) {
-            logger.warn(`Service ${serviceId} is already subscribed to topic: ${canonicalTopic}`);
-            return false;
-        }
-
-        // Insert the new subscriber, maintaining priority order
-        const newSubscriber = { serviceId, priority };
         let i = 0;
-        // Iterate while priority is greater OR equal and we haven't reached the end
-        while (i < subscribers.length && subscribers[i].priority >= priority) {
+        let index = -1; // Initialize index to -1, which means position to insert not found (push to the end)
+        // Iterate while priority is greater OR equal and check for existing subscription
+        while (i < subscribers.length) {
+            if (subscribers[i].serviceId === serviceId) {
+                if (subscribers[i].priority === priority) {
+                    logger.info(`Service ${serviceId} is already subscribed to topic: ${canonicalTopic} with priority: ${priority}`);
+                    return false;
+                } else {
+                    logger.debug(`Service ${serviceId} is already subscribed to topic: ${canonicalTopic} with priority: ${subscribers[i].priority}, updating to ${priority}`);
+                    subscribers.splice(i, 1);
+                    continue;
+                }
+            }
+            if (index < 0 && subscribers[i].priority < priority) {
+                index = i;
+            }
             i++;
         }
-        subscribers.splice(i, 0, newSubscriber);
+        if (index < 0) {
+            subscribers.push({ serviceId, priority });
+        } else {
+            subscribers.splice(index, 0, { serviceId, priority });
+        }
 
-        logger.info(`Service ${serviceId} subscribed to topic: ${canonicalTopic} with priority ${priority}`);
+        logger.info(`Service subscribed to topic:${canonicalTopic} with priority:${priority}`, { serviceId, topic: canonicalTopic, priority });
         return true;
     }
 
@@ -94,6 +104,19 @@ export class SubscriptionManager {
             }
             return true;
         }
+    }
+
+    /**
+     * Checks if a service is subscribed to a topic.
+     *
+     * @param serviceId The ID of the service to check.
+     * @param topic The topic to check for subscription.
+     * @returns True if the service is subscribed to the topic, false otherwise.
+     */
+    isSubscribed(serviceId: string, topic: string): boolean {
+        const canonicalTopic = TopicUtils.getCanonical(topic);
+        const subscribers = this.subscriptions.get(canonicalTopic);
+        return subscribers ? subscribers.some(sub => sub.serviceId === serviceId) : false;
     }
 
     /**
@@ -142,12 +165,37 @@ export class SubscriptionManager {
     }
 
     /**
+     * Gets the set of topics that a service is subscribed to.
+     *
+     * @param serviceId The ID of the service to get subscribed topics for.
+     * @returns An array of topic names that the service is subscribed to.
+     */
+    getSubscribedInfo(serviceId: string): { topic: string; priority: number }[] {
+        const subscribedTopics: { topic: string; priority: number }[] = [];
+        for (const [topic, subscribers] of this.subscriptions) {
+            const index = subscribers.findIndex(sub => sub.serviceId === serviceId);
+            if (index >= 0) {
+                subscribedTopics.push({ topic, priority: subscribers[index].priority });
+            }
+        }
+        return subscribedTopics.sort((a, b) => a.topic.localeCompare(b.topic)); // Sort by topic
+    }
+
+    /**
      * Gets all the unique topics that have at least one subscriber.
      *
      * @returns An array of unique topic names that have subscribers.
      */
     getAllSubscribedTopics(): string[] {
         return Array.from(this.subscriptions.keys()).sort();
+    }
+
+    getAllSubscribedTopicWithSubscribers(): Record<string, Subscriber[]> {
+        const result: Record<string, Subscriber[]> = {};
+        for (const [topic, subscribers] of this.subscriptions) {
+            result[topic] = subscribers;
+        }
+        return result;
     }
 
     /**
