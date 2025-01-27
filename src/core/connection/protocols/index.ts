@@ -1,3 +1,2 @@
-export { TCPSocketConnection } from './tcpsocket';
-export { WebSocketConnection } from './websocket';
-export { createCombinedServer, CombinedServer } from './server';
+export { createTcpServer, TCPSocketConnection } from './tcpsocket';
+export { createWebSocketServer, WebSocketConnection } from './websocket';

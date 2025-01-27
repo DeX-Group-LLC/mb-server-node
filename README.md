@@ -63,7 +63,9 @@ Below are all available configuration options with their default values and desc
 
 ```yaml
 # Server Configuration
-port: 3000                    # Port number for the WebSocket server
+ports:                       # Server ports configuration
+  websocket: 3000           # Port number for the WebSocket server
+  tcp: 3001                 # Port number for the TCP server
 host: 'localhost'             # Host address to bind the server to
 ssl:                         # Optional SSL/TLS configuration
   key: ''                    # Path to SSL private key file
@@ -130,7 +132,8 @@ Environment variables can be loaded in two ways:
 Here's a comprehensive list of all supported environment variables:
 
 **Server Configuration**
-- `PORT` - WebSocket server port (default: 3000)
+- `WEBSOCKET_PORT` - WebSocket server port (default: 3000)
+- `TCP_PORT` - TCP server port (default: 3001)
 - `HOST` - Host address to bind to (default: 'localhost')
 - `SSL_KEY` - Path to SSL private key file
 - `SSL_CERT` - Path to SSL certificate file

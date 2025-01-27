@@ -2,7 +2,10 @@
  * Represents the configuration for the Message Broker.
  */
 export interface Config {
-    port: number;
+    ports: {
+        websocket: number;
+        tcp: number;
+    };
     host: string;
     ssl?: {
         key?: string;

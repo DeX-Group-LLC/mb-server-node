@@ -8,9 +8,10 @@
 
 import { jest } from '@jest/globals';
 import { Server } from 'net';
+import { WebSocketServer } from 'ws';
 import { MessageBroker } from '@core/broker';
 import { ConnectionManager } from '@core/connection/manager';
-import { CombinedServer, createCombinedServer } from '@core/connection/protocols';
+import { createTcpServer, createWebSocketServer } from '@core/connection/protocols';
 import { MonitoringManager } from '@core/monitoring';
 import { MessageRouter } from '@core/router';
 import { ServiceRegistry } from '@core/registry';
@@ -20,6 +21,7 @@ import logger, { SetupLogger } from '@utils/logger';
 
 // Mock all external dependencies
 jest.mock('net');
+jest.mock('ws');
 jest.mock('@core/connection/manager', () => ({
     ConnectionManager: jest.fn().mockImplementation((messageRouter, serviceRegistry, monitorManager, subscriptionManager) => {
         if (!messageRouter || !serviceRegistry || !monitorManager || !subscriptionManager) {
@@ -30,7 +32,10 @@ jest.mock('@core/connection/manager', () => ({
         };
     })
 }));
-jest.mock('@core/connection/protocols');
+jest.mock('@core/connection/protocols', () => ({
+    createTcpServer: jest.fn(),
+    createWebSocketServer: jest.fn()
+}));
 jest.mock('@core/monitoring');
 jest.mock('@core/router');
 jest.mock('@core/registry');
@@ -54,8 +59,8 @@ jest.mock('@utils/logger', () => {
  * @group core
  */
 describe('MessageBroker', () => {
-    let mockServer: jest.Mocked<Server>;
-    let mockCombinedServer: jest.Mocked<CombinedServer>;
+    let mockTcpServer: jest.Mocked<Server>;
+    let mockWsServer: jest.Mocked<WebSocketServer>;
     let mockConnectionManager: jest.Mocked<ConnectionManager>;
     let mockMessageRouter: jest.Mocked<MessageRouter>;
     let mockMonitorManager: jest.Mocked<MonitoringManager>;
@@ -106,13 +111,28 @@ describe('MessageBroker', () => {
             dispose: jest.fn().mockImplementation(() => Promise.resolve())
         } as unknown as jest.Mocked<ServiceRegistry>;
 
-        mockServer = {
-            close: jest.fn()
+        // Create mock servers with minimal required methods
+        mockTcpServer = {
+            close: jest.fn().mockImplementation(() => Promise.resolve()),
+            ref: jest.fn(),
+            unref: jest.fn(),
+            address: jest.fn(),
+            listen: jest.fn(),
+            getConnections: jest.fn()
         } as unknown as jest.Mocked<Server>;
 
-        mockCombinedServer = {
-            close: jest.fn().mockImplementation(() => Promise.resolve())
-        } as unknown as jest.Mocked<CombinedServer>;
+        mockWsServer = {
+            close: jest.fn().mockImplementation(() => Promise.resolve()),
+            address: jest.fn(),
+            clients: new Set(),
+            options: {},
+            path: '',
+            on: jest.fn(),
+            once: jest.fn(),
+            emit: jest.fn(),
+            addListener: jest.fn(),
+            removeListener: jest.fn()
+        } as unknown as jest.Mocked<WebSocketServer>;
 
         // Setup mock constructors to return instances
         (MonitoringManager as jest.Mock).mockReturnValue(mockMonitorManager);
@@ -120,7 +140,8 @@ describe('MessageBroker', () => {
         (SubscriptionManager as jest.Mock).mockReturnValue(mockSubscriptionManager);
         (MessageRouter as jest.Mock).mockReturnValue(mockMessageRouter);
         (ServiceRegistry as jest.Mock).mockReturnValue(mockServiceRegistry);
-        (createCombinedServer as jest.Mock).mockReturnValue(mockCombinedServer);
+        (createTcpServer as jest.Mock).mockReturnValue(mockTcpServer);
+        (createWebSocketServer as jest.Mock).mockReturnValue(mockWsServer);
 
         // Store the ConnectionManager instance when it's created
         (ConnectionManager as jest.Mock).mockImplementation((messageRouter, serviceRegistry, monitorManager, subscriptionManager) => {
@@ -162,7 +183,8 @@ describe('MessageBroker', () => {
             expect(mockMessageRouter.assignServiceRegistry).toHaveBeenCalledWith(mockServiceRegistry);
 
             // Verify server creation
-            expect(createCombinedServer).toHaveBeenCalledWith(mockConnectionManager);
+            expect(createTcpServer).toHaveBeenCalledWith(mockConnectionManager);
+            expect(createWebSocketServer).toHaveBeenCalledWith(mockConnectionManager);
 
             // Verify creation logging
             expect(logger.info).toHaveBeenCalledWith(expect.stringMatching(/^Created at .+$/));
@@ -194,7 +216,8 @@ describe('MessageBroker', () => {
             expect(mockSubscriptionManager.dispose).toHaveBeenCalled();
             expect(mockServiceRegistry.dispose).toHaveBeenCalled();
             expect(mockConnectionManager.dispose).toHaveBeenCalled();
-            expect(mockCombinedServer.close).toHaveBeenCalled();
+            expect(mockTcpServer.close).toHaveBeenCalled();
+            expect(mockWsServer.close).toHaveBeenCalled();
             expect(mockSystemManager.dispose).toHaveBeenCalled();
             expect(mockMonitorManager.dispose).toHaveBeenCalled();
 
@@ -209,7 +232,8 @@ describe('MessageBroker', () => {
          */
         it('should handle server close errors', async () => {
             const error = new Error('Server close error');
-            mockCombinedServer.close.mockRejectedValueOnce(error);
+            const mockCloseWithError = jest.fn().mockImplementation(() => Promise.reject(error));
+            Object.assign(mockTcpServer, { close: mockCloseWithError });
 
             await expect(broker.shutdown()).rejects.toThrow(error);
 
@@ -222,7 +246,8 @@ describe('MessageBroker', () => {
          */
         it('should dispose components even if server close fails', async () => {
             const error = new Error('Server close error');
-            mockCombinedServer.close.mockRejectedValueOnce(error);
+            const mockCloseWithError = jest.fn().mockImplementation(() => Promise.reject(error));
+            Object.assign(mockTcpServer, { close: mockCloseWithError });
 
             try {
                 await broker.shutdown();

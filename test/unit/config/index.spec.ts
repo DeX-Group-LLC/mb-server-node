@@ -60,8 +60,15 @@ describe('Config', () => {
     it('should load default config and apply environment variable overrides', () => {
         // Mock default config YAML
         const mockConfig = {
-            port: 8080,
+            ports: {
+                websocket: 8080,
+                tcp: 8081
+            },
             host: 'localhost',
+            logging: {
+                level: 'info',
+                format: 'json'
+            },
             auth: {
                 failure: {
                     lockout: {
@@ -83,7 +90,9 @@ describe('Config', () => {
             connection: {
                 max: {
                     concurrent: 1000
-                }
+                },
+                heartbeatRetryTimeout: 5000,
+                heartbeatDeregisterTimeout: 30000
             },
             request: {
                 response: {
@@ -98,6 +107,14 @@ describe('Config', () => {
                     requests: 100
                 }
             },
+            message: {
+                payload: {
+                    maxLength: 1048576 // 1MB
+                }
+            },
+            monitoring: {
+                interval: 5000
+            },
             ssl: {} // Add empty SSL object to match default config
         };
 
@@ -108,7 +125,8 @@ describe('Config', () => {
         const originalEnv = process.env;
         process.env = {
             ...originalEnv,
-            PORT: '9090',
+            WEBSOCKET_PORT: '9090',
+            TCP_PORT: '9091',
             HOST: 'test-host',
             AUTH_FAILURE_LOCKOUT_THRESHOLD: '10',
             AUTH_FAILURE_LOCKOUT_DURATION: '600',
@@ -129,7 +147,8 @@ describe('Config', () => {
         const config = loadConfig('/test/path/config.yaml');
 
         // Verify environment variables override default values
-        expect(config.port).toBe(9090);
+        expect(config.ports.websocket).toBe(9090);
+        expect(config.ports.tcp).toBe(9091);
         expect(config.host).toBe('test-host');
         expect(config.auth.failure.lockout.threshold).toBe(10);
         expect(config.auth.failure.lockout.duration).toBe(600);
