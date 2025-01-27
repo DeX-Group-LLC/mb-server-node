@@ -4,7 +4,7 @@ import { ActionType } from '@core/types';
  * Represents the header section of a message.
  * Contains metadata about the message including its action type, topic, and version.
  */
-export interface Header {
+export type BrokerHeader = {
     /** The type of action this message represents (e.g., REQUEST, RESPONSE, PUBLISH) */
     action: ActionType;
 
@@ -15,14 +15,22 @@ export interface Header {
     version: string;
 
     /** Optional unique identifier for request-response message pairs */
-    requestid?: string;
-}
+    requestId?: string;
+
+    /** Optional unique identifier for parent request-response message pairs */
+    parentRequestId?: string;
+};
+
+export type ClientHeader = BrokerHeader & {
+    /** Optional timeout for request-response message pairs */
+    timeout?: number;
+};
 
 /**
  * Represents an error structure within a message.
  * Used to communicate error details in a standardized format.
  */
-export interface Error {
+export type Error = {
     /** Unique error code identifying the type of error */
     code: string;
 
@@ -34,31 +42,34 @@ export interface Error {
 
     /** Optional additional error details as a structured object */
     details?: object;
-}
+};
+
+export type PayloadError = Error;
+
+export type PayloadSuccess = Record<string, any>;
 
 /**
  * Represents the payload section of a message.
  * Contains the actual data being transmitted along with optional control fields.
  */
-export interface Payload {
-    /** Optional timeout in milliseconds for request messages */
-    timeout?: number;
-
-    /** Optional error information for error responses */
-    error?: Error;
-
-    /** Additional payload fields with any valid JSON value */
-    [key: string]: any; // Allow other fields in the payload
-}
+export type Payload = PayloadSuccess | PayloadError;
 
 /**
  * Represents a complete message in the system.
  * Combines a header and payload to form a full message structure.
  */
-export interface Message {
+export type Message<T extends BrokerHeader | ClientHeader, U extends Payload = Payload> = {
     /** Message metadata and routing information */
-    header: Header;
+    header: T;
 
     /** Message content and data */
-    payload: Payload;
-}
+    payload: U;
+
+    /** The size of the message in bytes */
+    size: number;
+};
+
+/*export type Brand<B> = { __brand: B };
+export type Branded<T, B extends string> = T & Brand<B>;
+export type ExcludeBrand<T> = T extends Brand<infer B> ? Exclude<T, Brand<B>> : T;*/
+export type Exact<A, B> = Required<A> extends Required<B> ? (Required<B> extends Required<A> ? A : never) : never;

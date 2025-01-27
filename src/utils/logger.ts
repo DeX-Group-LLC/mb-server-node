@@ -17,4 +17,8 @@ const logger = winston.createLogger({
     ],
 });
 
+export function SetupLogger(module: string) {
+    return logger.child({ module });
+}
+
 export default logger;
