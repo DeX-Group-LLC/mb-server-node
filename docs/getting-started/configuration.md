@@ -21,9 +21,12 @@ Priority order (highest to lowest):
 
 ```env
 # WebSocket server configuration
-WEBSOCKET_PORT=8080        # WebSocket server port
-TCP_PORT=8081             # TCP server port
-HOST=localhost             # Host to bind to
+WS_PORT=8080              # Unsecure WebSocket server port
+WSS_PORT=8443             # Secure WebSocket server port (TLS)
+TCP_PORT=8081             # Unsecure TCP server port
+TLS_PORT=8444             # Secure TCP server port (TLS)
+HOST=localhost            # Host to bind to
+ALLOW_UNSECURE=false     # Whether to allow unsecure connections
 ```
 
 ### SSL/TLS Configuration
@@ -72,9 +75,12 @@ MAX_OUTSTANDING_REQUESTS=10000           # Maximum pending requests
 
 ```yaml
 ports:
-  websocket: 8080
-  tcp: 8081
+  ws: 8080      # Unsecure WebSocket port
+  wss: 8443     # Secure WebSocket port (TLS)
+  tcp: 8081     # Unsecure TCP port
+  tls: 8444     # Secure TCP port (TLS)
 host: 'localhost'
+allowUnsecure: false  # Whether to allow unsecure connections
 ssl:
   key: './certs/key.pem'
   cert: './certs/cert.pem'
@@ -109,13 +115,16 @@ mb-server [options]
 
 Options:
   -c, --config <path>     Path to configuration file
-  -p, --ws-port <port>    WebSocket port (default: 8080)
-  -t, --tcp-port <port>   TCP port (default: 8081)
-  -h, --host <host>       Host to bind to (default: 0.0.0.0)
-  --ssl-key <path>        Path to SSL private key
-  --ssl-cert <path>       Path to SSL certificate
-  -v, --version          Show version information
-  --help                 Show this help message
+  --ws-port <port>       Unsecure WebSocket port (default: 8080)
+  --wss-port <port>      Secure WebSocket port (default: 8443)
+  --tcp-port <port>      Unsecure TCP port (default: 8081)
+  --tls-port <port>      Secure TCP port (default: 8444)
+  -h, --host <host>      Host to bind to (default: localhost)
+  --allow-unsecure      Allow unsecure connections (default: false)
+  --ssl-key <path>      Path to SSL private key
+  --ssl-cert <path>     Path to SSL certificate
+  -v, --version         Show version information
+  --help               Show this help message
 ```
 
 ## Environment Variables Reference
@@ -124,9 +133,12 @@ Options:
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `WEBSOCKET_PORT` | number | `8080` | WebSocket server port |
-| `TCP_PORT` | number | `8081` | TCP server port |
-| `HOST` | string | `0.0.0.0` | Server host |
+| `WS_PORT` | number | `8080` | Unsecure WebSocket server port |
+| `WSS_PORT` | number | `8443` | Secure WebSocket server port (TLS) |
+| `TCP_PORT` | number | `8081` | Unsecure TCP server port |
+| `TLS_PORT` | number | `8444` | Secure TCP server port (TLS) |
+| `HOST` | string | `localhost` | Server host |
+| `ALLOW_UNSECURE` | boolean | `false` | Whether to allow unsecure connections |
 
 ### SSL/TLS Settings
 
@@ -169,9 +181,12 @@ Options:
 
 ```bash
 # Basic setup
-export WEBSOCKET_PORT=8080
+export WS_PORT=8080
+export WSS_PORT=8443
 export TCP_PORT=8081
+export TLS_PORT=8444
 export HOST=0.0.0.0
+export ALLOW_UNSECURE=false
 
 # Start the server
 npm start
@@ -187,21 +202,22 @@ CONFIG_PATH=/path/to/config.yaml npm start
 ## Best Practices
 
 1. **Production Settings**
-   - Use SSL/TLS in production
+   - Use SSL/TLS in production (disable unsecure connections)
    - Set appropriate rate limits
    - Configure proper logging
    - Enable monitoring
 
 2. **Development Settings**
+   - Enable unsecure connections for easier testing
    - Use debug logging
    - Disable rate limits
    - Use pretty log format
    - Enable shorter timeouts
 
 3. **Security Settings**
-   - Configure authentication
+   - Disable unsecure connections in production
+   - Configure SSL/TLS with strong certificates
    - Set reasonable rate limits
-   - Enable SSL/TLS
    - Set proper timeouts
 
 4. **Performance Tuning**

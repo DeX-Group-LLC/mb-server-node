@@ -1,10 +1,85 @@
-# TCP Socket Protocol
-
-This document describes the TCP Socket protocol implementation in MB Server Node.
+# TCP Protocol
 
 ## Overview
 
-The TCP Socket protocol provides a simple, efficient connection for services that don't require browser support. It uses a basic message framing format with a 4-byte length prefix.
+The TCP protocol implementation supports both secure (TLS) and unsecure connections. By default, only secure connections are allowed, but unsecure connections can be enabled for development or testing purposes.
+
+## Configuration
+
+### Ports
+- Unsecure TCP: 8081 (default)
+- Secure TCP (TLS): 8444 (default)
+
+### Security Settings
+- `allowUnsecure`: Whether to allow unsecure TCP connections (default: false)
+- `ssl`: TLS configuration
+  - `key`: Path to SSL private key file
+  - `cert`: Path to SSL certificate file
+
+## Server Types
+
+### Secure TCP Server (TLS)
+- Enabled when SSL configuration is provided
+- Uses TLS v1.2 or higher
+- Requires valid SSL certificate and private key
+- Handles TLS handshake errors gracefully
+- Logs connection attempts with IP addresses
+
+### Unsecure TCP Server
+- Only enabled when `allowUnsecure` is true
+- Not recommended for production use
+- Useful for development and testing
+- Logs warning when started
+
+## Connection Handling
+
+Both secure and unsecure servers:
+1. Accept incoming connections
+2. Log connection details (IP address)
+3. Set connection timeout
+4. Handle connection errors
+5. Clean up resources on close
+
+## Message Format
+
+Messages use a simple framing protocol:
+```
+[4 bytes length][payload]
+```
+- Length is in network byte order (big endian)
+- Maximum message size is configurable
+- Messages exceeding size limit trigger connection closure
+
+## Error Handling
+
+### Server Errors
+- TLS handshake failures are logged at debug level
+- Connection errors are logged with service ID and IP
+- Server errors include TLS/TCP prefix in logs
+
+### Connection Errors
+- Socket errors trigger connection closure
+- Connection manager is notified of closures
+- Resources are properly cleaned up
+
+## Best Practices
+
+1. **Production Use**
+   - Always use TLS (disable unsecure connections)
+   - Configure proper certificate chain
+   - Monitor TLS handshake failures
+   - Set appropriate timeouts
+
+2. **Development**
+   - Enable unsecure connections if needed
+   - Use self-signed certificates for TLS testing
+   - Monitor debug logs for connection issues
+
+3. **Security**
+   - Keep TLS certificates up to date
+   - Use strong TLS configuration
+   - Monitor for connection attempts
+   - Log all security-related events
 
 ## Connection
 
@@ -94,23 +169,6 @@ socket.read(4, (err, bytes) => {
 1. **Text Only**: Only supports UTF-8 encoded text messages. No binary payload support.
 2. **Simple Framing**: Uses only message length, no additional framing flags or options.
 3. **Maximum Size**: Messages limited to maximum payload length (configurable via `MAX_MESSAGE_PAYLOAD_LENGTH`).
-
-## Error Handling
-
-1. **Invalid Length**
-   - Length prefix must be a valid 32-bit unsigned integer
-   - Must match actual message length
-   - Must not exceed maximum message size
-
-2. **Invalid Message**
-   - Must be valid UTF-8 text
-   - Must follow MB Server Node message format
-   - Must contain valid JSON payload
-
-3. **Connection Errors**
-   - Handle connection drops
-   - Implement reconnection logic
-   - Monitor connection state
 
 ## Example Implementation
 
