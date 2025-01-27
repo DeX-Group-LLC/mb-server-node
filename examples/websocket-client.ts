@@ -4,7 +4,7 @@ import { config } from '../src/config';
 /**
  * A simple WebSocket client for testing the Message Broker.
  */
-const ws = new WebSocket(`ws://${config.host}:${config.ports.websocket}`);
+const ws = new WebSocket(`ws://${config.host}:${config.ports.ws}`);
 
 ws.on('open', () => {
     console.log('Connected to Message Broker');
