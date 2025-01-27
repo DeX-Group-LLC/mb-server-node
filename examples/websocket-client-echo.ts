@@ -152,7 +152,7 @@ if (listener) {
             }, randomUUID(), requestId));
 
             // Send test.end publish message with the trigger request as parent
-            listener.send(createMessage(ActionType.PUBLISH, 'test.end', {
+            listener.send(createMessage(ActionType.REQUEST, 'test.end', {
                 timestamp: new Date().toISOString(),
                 triggeredBy: 'listener'
             }, randomUUID(), requestId, 500));
