@@ -6,17 +6,17 @@ System messages in MB Server Node are special messages used for internal communi
 
 | Topic | Supported Actions | Description |
 |-------|------------------|-------------|
-| `system.heartbeat` | REQUEST, RESPONSE | Service health monitoring and status updates |
-| `system.log.subscribe` | REQUEST | Subscribe to broker log messages with level and regex filters |
-| `system.log.unsubscribe` | REQUEST | Unsubscribe from broker log messages |
-| `system.metrics` | REQUEST | Retrieve broker metrics with optional filters |
-| `system.service.list` | REQUEST | List all registered services and their status |
-| `system.service.register` | REQUEST | Register or update a service with the broker |
-| `system.service.subscriptions` | REQUEST | Get subscription information for a service |
-| `system.topic.list` | REQUEST | List all subscribed topics in the broker |
-| `system.topic.subscribe` | REQUEST | Subscribe to a topic with a priority level |
-| `system.topic.subscribers` | REQUEST | Get mapping of topics to their subscribers |
-| `system.topic.unsubscribe` | REQUEST | Unsubscribe from a topic |
+| [`system.heartbeat`](#heartbeat-systemheartbeat) | REQUEST, RESPONSE | Service health monitoring and status updates |
+| [`system.log.subscribe`](#log-subscribe-systemlogsubscribe) | REQUEST | Subscribe to broker log messages with level and regex filters |
+| [`system.log.unsubscribe`](#log-unsubscribe-systemlogunsubscribe) | REQUEST | Unsubscribe from broker log messages |
+| [`system.metrics`](#metrics-systemmetrics) | REQUEST | Retrieve broker metrics with optional filters |
+| [`system.service.list`](#list-services-systemservicelist) | REQUEST | List all registered services and their status |
+| [`system.service.register`](#service-registration-systemserviceregister) | REQUEST | Register or update a service with the broker |
+| [`system.service.subscriptions`](#service-subscriptions-systemservicesubscriptions) | REQUEST | Get subscription information for a service |
+| [`system.topic.list`](#list-topics-systemtopiclist) | REQUEST | List all subscribed topics in the broker |
+| [`system.topic.subscribe`](#subscribe-systemtopicsubscribe) | REQUEST | Subscribe to a topic with a priority level |
+| [`system.topic.subscribers`](#topic-subscribers-systemtopicsubscribers) | REQUEST | Get mapping of topics to their subscribers |
+| [`system.topic.unsubscribe`](#unsubscribe-systemtopicunsubscribe) | REQUEST | Unsubscribe from a topic |
 
 ## Overview
 
