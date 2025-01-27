@@ -3,14 +3,17 @@
  */
 export interface Config {
     ports: {
-        websocket: number;
         tcp: number;
+        tls: number;
+        ws: number;
+        wss: number;
     };
     host: string;
     ssl?: {
         key?: string;
         cert?: string;
     };
+    allowUnsecure: boolean;
     logging: {
         level: string;
         format: string;

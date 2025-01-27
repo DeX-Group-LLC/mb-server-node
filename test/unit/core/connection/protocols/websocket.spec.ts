@@ -23,9 +23,11 @@ import { createWebSocketServer } from '@core/connection/protocols/websocket';
 jest.mock('@config', () => ({
     config: {
         ports: {
-            websocket: 8080
+            ws: 8080,
+            wss: 8443
         },
         host: 'localhost',
+        allowUnsecure: true,
         message: {
             payload: {
                 maxLength: 32 * 1024
@@ -47,16 +49,20 @@ jest.mock('https');
 jest.mock('ws');
 jest.mock('http', () => ({
     createServer: jest.fn().mockImplementation(() => ({
-        listen: jest.fn((port, host, callback) => {
-            if (callback) callback();
+        listen: jest.fn().mockImplementation((port, host, callback) => {
+            if (typeof callback === 'function') {
+                callback();
+            }
             return this;
         })
     }))
 }));
 jest.mock('https', () => ({
     createServer: jest.fn().mockImplementation(() => ({
-        listen: jest.fn((port, host, callback) => {
-            if (callback) callback();
+        listen: jest.fn().mockImplementation((port, host, callback) => {
+            if (typeof callback === 'function') {
+                callback();
+            }
             return this;
         })
     }))
@@ -309,19 +315,21 @@ describe('createWebSocketServer', () => {
 
         // Mock HTTP server
         mockHttpServer = {
-            listen: jest.fn().mockImplementation(function(this: http.Server, ...args: any[]) {
-                const callback = args[args.length - 1];
-                if (typeof callback === 'function') callback();
-                return this;
+            listen: jest.fn().mockImplementation((port, host, callback) => {
+                if (typeof callback === 'function') {
+                    callback();
+                }
+                return mockHttpServer;
             })
         } as unknown as jest.Mocked<http.Server>;
 
         // Mock HTTPS server
         mockHttpsServer = {
-            listen: jest.fn().mockImplementation(function(this: https.Server, ...args: any[]) {
-                const callback = args[args.length - 1];
-                if (typeof callback === 'function') callback();
-                return this;
+            listen: jest.fn().mockImplementation((port, host, callback) => {
+                if (typeof callback === 'function') {
+                    callback();
+                }
+                return mockHttpsServer;
             })
         } as unknown as jest.Mocked<https.Server>;
 
@@ -359,26 +367,41 @@ describe('createWebSocketServer', () => {
      * - IP address validation
      */
     describe('non-SSL server', () => {
-        beforeEach(() => {
-            // Reset SSL settings
-            const { config } = require('@config');
-            config.ssl = undefined;
-        });
-
         /**
-         * @test Verifies WebSocket server creation without SSL configuration
-         * @expected Should create HTTP server and WebSocket server with correct configuration
+         * @test Verifies WebSocket server creation without SSL
+         * @expected Should create an unsecure WebSocket server with correct configuration
          */
         it('should create a WebSocket server without SSL', () => {
-            const wss = createWebSocketServer(mockConnectionManager);
+            // Configure allowUnsecure to ensure server creation succeeds
+            const { config } = require('@config');
+            config.allowUnsecure = true;
+            config.ssl = undefined;
 
+            const servers = createWebSocketServer(mockConnectionManager);
+            expect(servers).toHaveLength(1);
+            expect(servers[0]).toBe(mockWss);
+
+            // Verify HTTP server was created
             expect(http.createServer).toHaveBeenCalled();
             expect(https.createServer).not.toHaveBeenCalled();
-            expect(WebSocketServer).toHaveBeenCalledWith({
+
+            // Verify WebSocket server was created with correct config
+            expect(WebSocket.Server).toHaveBeenCalledWith({
                 server: mockHttpServer,
                 maxPayload: expect.any(Number)
             });
-            expect(wss).toBe(mockWss);
+
+            // Verify server starts listening
+            expect(mockHttpServer.listen).toHaveBeenCalledWith(
+                config.ports.ws,
+                config.host,
+                expect.any(Function)
+            );
+
+            // Verify logging after callback
+            expect(logger.info).toHaveBeenCalledWith(
+                `Unsecure WebSocket server listening on ${config.host}:${config.ports.ws}`
+            );
         });
 
         /**
@@ -494,34 +517,50 @@ describe('createWebSocketServer', () => {
      * - Secure connection establishment
      */
     describe('SSL server', () => {
-        beforeEach(() => {
+        /**
+         * @test Verifies server startup logging with SSL
+         * @expected Should log appropriate startup message for secure WebSocket server
+         */
+        it('should log appropriate message when server starts listening', () => {
+            // Configure SSL
             const { config } = require('@config');
             config.ssl = {
                 key: 'key.pem',
                 cert: 'cert.pem'
             };
-            jest.clearAllMocks();
-        });
+            config.allowUnsecure = false;
 
-        afterEach(() => {
-            const { config } = require('@config');
-            config.ssl = undefined;
-        });
+            const servers = createWebSocketServer(mockConnectionManager);
+            expect(servers).toHaveLength(1);
+            expect(servers[0]).toBe(mockWss);
 
-        /**
-         * @test Verifies server startup logging with SSL enabled
-         * @expected Should log appropriate message indicating SSL is enabled
-         */
-        it('should log appropriate message when server starts listening', () => {
-            createWebSocketServer(mockConnectionManager);
+            // Verify SSL files are read
+            expect(fs.readFileSync).toHaveBeenCalledWith('key.pem');
+            expect(fs.readFileSync).toHaveBeenCalledWith('cert.pem');
 
-            // Call the listen callback to trigger the log message
-            const args = mockHttpsServer.listen.mock.calls[0];
-            const callback = args[args.length - 1];
-            if (typeof callback === 'function') callback();
+            // Verify HTTPS server was created with the read content
+            expect(https.createServer).toHaveBeenCalledWith({
+                key: fs.readFileSync('key.pem'),
+                cert: fs.readFileSync('cert.pem')
+            });
+            expect(http.createServer).not.toHaveBeenCalled();
 
+            // Verify WebSocket server was created with correct config
+            expect(WebSocket.Server).toHaveBeenCalledWith({
+                server: mockHttpsServer,
+                maxPayload: expect.any(Number)
+            });
+
+            // Verify server starts listening
+            expect(mockHttpsServer.listen).toHaveBeenCalledWith(
+                config.ports.wss,
+                config.host,
+                expect.any(Function)
+            );
+
+            // Verify logging after callback
             expect(logger.info).toHaveBeenCalledWith(
-                `WebSocket server listening on ${config.host}:${config.ports.websocket} with SSL`
+                `Secure WebSocket server listening on ${config.host}:${config.ports.wss}`
             );
         });
     });
@@ -552,6 +591,22 @@ describe('createWebSocketServer', () => {
                 errorHandler.bind(mockWss)(error);
                 expect(logger.error).toHaveBeenCalledWith('WebSocket server error:', error);
             }
+        });
+    });
+
+    describe('server creation', () => {
+        /**
+         * @test Verifies error when no servers can be started
+         * @expected Should throw error when neither SSL is configured nor unsecure is allowed
+         */
+        it('should throw error when no servers can be started', () => {
+            // Configure to disable both secure and unsecure
+            const { config } = require('@config');
+            config.ssl = undefined;
+            config.allowUnsecure = false;
+
+            expect(() => createWebSocketServer(mockConnectionManager))
+                .toThrow('No WebSocket servers could be started. Check SSL configuration or enable unsecure WebSocket.');
         });
     });
 });

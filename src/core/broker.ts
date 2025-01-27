@@ -13,8 +13,8 @@ import { SystemManager } from './system/manager';
 const logger = SetupLogger('MessageBroker');
 
 export class MessageBroker {
-    private tcpServer: Server;
-    private wsServer: WebSocketServer;
+    private tcpServers: Server[];
+    private wsServers: WebSocketServer[];
     private connectionManager: ConnectionManager;
     private messageRouter: MessageRouter;
     private monitorManager: MonitoringManager;
@@ -38,8 +38,8 @@ export class MessageBroker {
         this.messageRouter.assignServiceRegistry(this.serviceRegistry);
 
         // Create TCP and WebSocket servers
-        this.tcpServer = createTcpServer(this.connectionManager);
-        this.wsServer = createWebSocketServer(this.connectionManager);
+        this.tcpServers = createTcpServer(this.connectionManager);
+        this.wsServers = createWebSocketServer(this.connectionManager);
 
         this.createdAt = new Date();
         logger.info(`Created at ${this.createdAt.toISOString()}`);
@@ -71,8 +71,10 @@ export class MessageBroker {
 
         // Stop all servers
         try {
-            await this.tcpServer.close();
-            await this.wsServer.close();
+            await Promise.all([
+                ...this.tcpServers.map(server => server.close()),
+                ...this.wsServers.map(server => server.close())
+            ]);
             logger.info('All servers closed');
         } catch (error) {
             logger.error('Error closing servers', { error });

@@ -125,9 +125,12 @@ describe('Config', () => {
         const originalEnv = process.env;
         process.env = {
             ...originalEnv,
-            WEBSOCKET_PORT: '9090',
+            WS_PORT: '9090',
+            WSS_PORT: '9443',
             TCP_PORT: '9091',
+            TLS_PORT: '9444',
             HOST: 'test-host',
+            ALLOW_UNSECURE: 'true',
             AUTH_FAILURE_LOCKOUT_THRESHOLD: '10',
             AUTH_FAILURE_LOCKOUT_DURATION: '600',
             RATE_LIMIT_GLOBAL_PER_SERVICE: '2000',
@@ -147,8 +150,10 @@ describe('Config', () => {
         const config = loadConfig('/test/path/config.yaml');
 
         // Verify environment variables override default values
-        expect(config.ports.websocket).toBe(9090);
+        expect(config.ports.ws).toBe(9090);
+        expect(config.ports.wss).toBe(9443);
         expect(config.ports.tcp).toBe(9091);
+        expect(config.ports.tls).toBe(9444);
         expect(config.host).toBe('test-host');
         expect(config.auth.failure.lockout.threshold).toBe(10);
         expect(config.auth.failure.lockout.duration).toBe(600);

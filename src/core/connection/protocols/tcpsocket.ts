@@ -114,27 +114,70 @@ export class TCPSocketConnection implements Connection {
 }
 
 /**
- * Creates a TCP server that listens on a dedicated port.
+ * Creates TCP server(s) that listen on dedicated ports.
+ * Can create both secure (TLS) and unsecure servers based on configuration.
  *
  * @param connectionManager - The connection manager instance to handle new connections
- * @returns The TCP server instance
+ * @returns Array of TCP server instances
  */
-export function createTcpServer(connectionManager: ConnectionManager): net.Server {
-    const isTls = config.ssl && config.ssl.key && config.ssl.cert;
+export function createTcpServer(connectionManager: ConnectionManager): net.Server[] {
+    const servers: net.Server[] = [];
 
-    // Create the base server (TCP or TLS)
-    const server = isTls
-        ? tls.createServer({
-            key: fs.readFileSync(config.ssl!.key!),
-            cert: fs.readFileSync(config.ssl!.cert!),
+    // Create secure (TLS) server if SSL is configured
+    if (config.ssl && config.ssl.key && config.ssl.cert) {
+        logger.debug('Creating secure TCP server (TLS)');
+        const secureServer = tls.createServer({
+            key: fs.readFileSync(config.ssl.key),
+            cert: fs.readFileSync(config.ssl.cert),
             handshakeTimeout: 5000, // 5 seconds timeout for handshake
             minVersion: 'TLSv1.2',
-            //requestCert: false,
-            //rejectUnauthorized: false
-        })
-        : net.createServer();
+        });
 
-    // Add specific TLS error handling
+        setupTcpServerHandlers(secureServer, connectionManager, true);
+
+        // Start listening
+        secureServer.listen(config.ports.tls, config.host, () => {
+            logger.info(`Secure TCP server (TLS) listening on ${config.host}:${config.ports.tls}`);
+        });
+
+        servers.push(secureServer);
+    } else {
+        logger.warn('SSL configuration is missing, secure TCP server (TLS) will not be started');
+    }
+
+    // Create unsecure TCP server if explicitly enabled
+    if (config.allowUnsecure) {
+        logger.debug('Creating unsecure TCP server - explicitly enabled in config');
+        const unsecureServer = net.createServer();
+
+        setupTcpServerHandlers(unsecureServer, connectionManager, false);
+
+        // Start listening
+        unsecureServer.listen(config.ports.tcp, config.host, () => {
+            logger.info(`Unsecure TCP server listening on ${config.host}:${config.ports.tcp}`);
+        });
+
+        servers.push(unsecureServer);
+    } else {
+        logger.debug('Unsecure TCP server is disabled');
+    }
+
+    if (servers.length === 0) {
+        throw new InternalError('No TCP servers could be started. Check SSL configuration or enable unsecure TCP.');
+    }
+
+    return servers;
+}
+
+/**
+ * Sets up the handlers for a TCP server
+ *
+ * @param server - The TCP server to configure
+ * @param connectionManager - The connection manager instance
+ * @param isTls - Whether this is a TLS server
+ */
+function setupTcpServerHandlers(server: net.Server, connectionManager: ConnectionManager, isTls: boolean): void {
+    // Add specific TLS error handling for secure servers
     if (isTls) {
         server.on('tlsClientError', (err, tlsSocket) => {
             const ip = tlsSocket.remoteAddress || 'unknown';
@@ -150,13 +193,13 @@ export function createTcpServer(connectionManager: ConnectionManager): net.Serve
     // Handle incoming connections
     server.on(isTls ? 'secureConnection' : 'connection', (socket: net.Socket) => {
         const ip = socket.remoteAddress || 'unknown';
-        logger.info(`Client connected (TCP) from IP ${ip}`);
+        logger.info(`Client connected (TCP${isTls ? '/TLS' : ''}) from IP ${ip}`);
 
         const connection = new TCPSocketConnection(socket, ip);
         connectionManager.addConnection(connection);
 
         socket.on('error', (error: Error) => {
-            logger.error(`TCP error from service ${connection.serviceId} (IP ${ip}):`, {
+            logger.error(`TCP${isTls ? '/TLS' : ''} error from service ${connection.serviceId} (IP ${ip}):`, {
                 serviceId: connection.serviceId,
                 error
             });
@@ -172,13 +215,6 @@ export function createTcpServer(connectionManager: ConnectionManager): net.Serve
 
     // Handle server errors
     server.on('error', (error: Error) => {
-        logger.error('TCP server error:', error);
+        logger.error(`TCP${isTls ? '/TLS' : ''} server error:`, error);
     });
-
-    // Start listening
-    server.listen(config.ports.tcp, config.host, () => {
-        logger.info(`TCP server listening on ${config.host}:${config.ports.tcp}${config.ssl ? ' with SSL' : ''}`);
-    });
-
-    return server;
 }

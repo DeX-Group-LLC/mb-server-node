@@ -35,6 +35,7 @@ jest.mock('@config', () => {
         ports: {
             tcp: 8080
         },
+        allowUnsecure: true,
         host: 'localhost',
         connection: {
             heartbeatDeregisterTimeout: 30000
@@ -576,14 +577,19 @@ describe('createTcpServer', () => {
 
         /**
          * @test Verifies TCP server creation without TLS
-         * @expected Should create plain TCP server without TLS configuration
+         * @expected Should create plain TCP server without TLS configuration when allowUnsecure is true
          */
         it('should create a TCP server without TLS', () => {
-            const server = createTcpServer(mockConnectionManager);
+            // Configure allowUnsecure
+            const { config } = require('@config');
+            config.allowUnsecure = true;
+
+            const servers = createTcpServer(mockConnectionManager);
 
             expect(net.createServer).toHaveBeenCalled();
             expect(tls.createServer).not.toHaveBeenCalled();
-            expect(server).toBe(mockServer);
+            expect(servers).toHaveLength(1);
+            expect(servers[0]).toBe(mockServer);
         });
 
         /**
@@ -591,6 +597,10 @@ describe('createTcpServer', () => {
          * @expected Should add connection and set appropriate timeouts
          */
         it('should handle incoming connections', () => {
+            // Configure allowUnsecure
+            const { config } = require('@config');
+            config.allowUnsecure = true;
+
             createTcpServer(mockConnectionManager);
 
             // Get and call the connection handler
@@ -606,6 +616,7 @@ describe('createTcpServer', () => {
             expect(mockConnectionManager.addConnection).toHaveBeenCalled();
             expect(mockSocket.setTimeout).toHaveBeenCalledWith(31000);
             expect(mockSocket.on).toHaveBeenCalledWith('timeout', expect.any(Function));
+            expect(logger.info).toHaveBeenCalledWith('Client connected (TCP) from IP 127.0.0.1');
         });
 
         it('should handle socket errors', () => {
@@ -735,7 +746,8 @@ describe('createTcpServer', () => {
                 ssl: {
                     key: 'key.pem',
                     cert: 'cert.pem'
-                }
+                },
+                allowUnsecure: false
             });
             jest.clearAllMocks();
         });
@@ -743,22 +755,25 @@ describe('createTcpServer', () => {
         afterEach(() => {
             const { config } = require('@config');
             config.ssl = undefined;
+            config.allowUnsecure = false;
         });
 
         /**
          * @test Verifies TLS server creation with SSL configuration
-         * @expected Should create TLS server with proper certificate configuration
+         * @expected Should create TLS server with proper SSL settings
          */
         it('should create a TLS server when SSL is configured', () => {
-            const server = createTcpServer(mockConnectionManager);
+            const servers = createTcpServer(mockConnectionManager);
 
-            expect(tls.createServer).toHaveBeenCalledWith(expect.objectContaining({
+            expect(tls.createServer).toHaveBeenCalledWith({
                 key: 'mock-content',
                 cert: 'mock-content',
-                handshakeTimeout: 5000
-            }));
+                handshakeTimeout: 5000,
+                minVersion: 'TLSv1.2'
+            });
             expect(net.createServer).not.toHaveBeenCalled();
-            expect(server).toBe(mockTlsServer);
+            expect(servers).toHaveLength(1);
+            expect(servers[0]).toBe(mockTlsServer);
         });
 
         /**
@@ -799,10 +814,31 @@ describe('createTcpServer', () => {
         });
 
         /**
-         * @test Verifies secure connection establishment
-         * @expected Should properly set up secure connection with timeouts
+         * @test Verifies handling of secure connections
+         * @expected Should properly handle TLS connections and their errors
          */
         it('should handle secure connections', () => {
+            // Configure SSL
+            const { config } = require('@config');
+            config.ssl = {
+                key: 'key.pem',
+                cert: 'cert.pem'
+            };
+            config.allowUnsecure = false;
+
+            // Create a mock socket that extends EventEmitter for proper event handling
+            const secureSocket = {
+                remoteAddress: '127.0.0.1',
+                setTimeout: jest.fn(),
+                end: jest.fn(),
+                destroy: jest.fn(),
+                on: jest.fn().mockReturnThis(),
+                write: jest.fn(),
+                connect: jest.fn(),
+                setEncoding: jest.fn(),
+                // Add other required Socket properties as needed
+            } as unknown as net.Socket;
+
             createTcpServer(mockConnectionManager);
 
             // Get and call the secure connection handler
@@ -819,13 +855,48 @@ describe('createTcpServer', () => {
                 });
 
                 // Trigger secure connection
-                connectionHandler(mockSocket);
+                connectionHandler(secureSocket);
 
                 // Verify connection setup
                 expect(mockConnectionManager.addConnection).toHaveBeenCalled();
-                expect(mockSocket.setTimeout).toHaveBeenCalledWith(31000);
-                expect(mockSocket.on).toHaveBeenCalledWith('timeout', expect.any(Function));
-                expect(logger.info).toHaveBeenCalledWith('Client connected (TCP) from IP 127.0.0.1');
+                expect(secureSocket.setTimeout).toHaveBeenCalledWith(31000);
+                expect(secureSocket.on).toHaveBeenCalledWith('timeout', expect.any(Function));
+                expect(logger.info).toHaveBeenCalledWith('Client connected (TCP/TLS) from IP 127.0.0.1');
+
+                // Get and trigger the error handler
+                const onCalls = (secureSocket.on as jest.Mock).mock.calls as [string, (...args: any[]) => void][];
+                const errorHandlers = onCalls
+                    .filter(([event]) => event === 'error')
+                    .map(([_, handler]) => handler);
+                expect(errorHandlers).toHaveLength(2); // Should have both TCPSocketConnection and server error handlers
+
+                // Test error handling
+                const error = new Error('secure connection error');
+                errorHandlers.forEach(handler => handler(error));
+
+                // Verify error was handled correctly - should be called twice
+                expect(logger.error).toHaveBeenCalledWith(
+                    'Socket error from service test-service (IP 127.0.0.1):',
+                    {
+                        serviceId: 'test-service',
+                        error
+                    }
+                );
+                expect(logger.error).toHaveBeenCalledWith(
+                    'TCP/TLS error from service test-service (IP 127.0.0.1):',
+                    {
+                        serviceId: 'test-service',
+                        error
+                    }
+                );
+                expect(mockConnectionManager.removeConnection).toHaveBeenCalledWith('test-service');
+
+                // Get and test timeout handler
+                const timeoutHandler = onCalls.find(([event]) => event === 'timeout')?.[1];
+                expect(timeoutHandler).toBeDefined();
+
+                timeoutHandler!();
+                expect(secureSocket.end).toHaveBeenCalled();
             }
         });
     });
@@ -839,13 +910,18 @@ describe('createTcpServer', () => {
      */
     describe('server error handling', () => {
         /**
-         * @test Verifies server-level error handling
-         * @expected Should log server errors appropriately
+         * @test Verifies server-level error handling for both TLS and non-TLS servers
+         * @expected Should log server errors appropriately with correct prefix
          */
-        it('should handle server errors', () => {
+        it('should handle server errors for both TLS and non-TLS servers', () => {
+            // Test non-TLS server error
+            const { config } = require('@config');
+            config.allowUnsecure = true;
+            config.ssl = undefined;
+
             createTcpServer(mockConnectionManager);
 
-            // Get and call the error handler
+            // Get and call the error handler for non-TLS server
             const errorHandler = getEventHandler<(err: Error) => void>(
                 mockServer.on.mock.calls,
                 'error'
@@ -854,8 +930,30 @@ describe('createTcpServer', () => {
             if (errorHandler) {
                 errorHandler(new Error('server error'));
             }
-
             expect(logger.error).toHaveBeenCalledWith('TCP server error:', expect.any(Error));
+
+            // Clear mocks for TLS test
+            jest.clearAllMocks();
+
+            // Test TLS server error
+            config.ssl = {
+                key: 'key.pem',
+                cert: 'cert.pem'
+            };
+            config.allowUnsecure = false;
+
+            createTcpServer(mockConnectionManager);
+
+            // Get and call the error handler for TLS server
+            const tlsErrorHandler = getEventHandler<(err: Error) => void>(
+                mockTlsServer.on.mock.calls,
+                'error'
+            );
+            expect(tlsErrorHandler).toBeDefined();
+            if (tlsErrorHandler) {
+                tlsErrorHandler(new Error('tls server error'));
+            }
+            expect(logger.error).toHaveBeenCalledWith('TCP/TLS server error:', expect.any(Error));
         });
     });
 
@@ -872,6 +970,10 @@ describe('createTcpServer', () => {
          * @expected Should listen on configured port and host
          */
         it('should start listening on configured port and host', () => {
+            // Configure allowUnsecure to ensure server creation succeeds
+            const { config } = require('@config');
+            config.allowUnsecure = true;
+
             createTcpServer(mockConnectionManager);
 
             expect(mockServer.listen).toHaveBeenCalledWith(
@@ -886,12 +988,15 @@ describe('createTcpServer', () => {
          * @expected Should log appropriate startup message without SSL
          */
         it('should log appropriate message when server starts listening without SSL', () => {
+            // Configure allowUnsecure
             const { config } = require('@config');
+            config.allowUnsecure = true;
             config.ssl = undefined;
+
             createTcpServer(mockConnectionManager);
 
             expect(logger.info).toHaveBeenCalledWith(
-                `TCP server listening on ${config.host}:${config.ports.tcp}`
+                `Unsecure TCP server listening on ${config.host}:${config.ports.tcp}`
             );
         });
 
@@ -900,16 +1005,35 @@ describe('createTcpServer', () => {
          * @expected Should log appropriate startup message with SSL enabled
          */
         it('should log appropriate message when server starts listening with SSL', () => {
+            // Configure SSL
             const { config } = require('@config');
             config.ssl = {
                 key: 'key.pem',
                 cert: 'cert.pem'
             };
+            config.allowUnsecure = false;
+
             createTcpServer(mockConnectionManager);
 
             expect(logger.info).toHaveBeenCalledWith(
-                `TCP server listening on ${config.host}:${config.ports.tcp} with SSL`
+                `Secure TCP server (TLS) listening on ${config.host}:${config.ports.tls}`
             );
+        });
+    });
+
+    describe('server creation', () => {
+        /**
+         * @test Verifies error when no servers can be started
+         * @expected Should throw error when neither SSL is configured nor unsecure is allowed
+         */
+        it('should throw error when no servers can be started', () => {
+            // Configure to disallow both secure and unsecure
+            const { config } = require('@config');
+            config.ssl = undefined;
+            config.allowUnsecure = false;
+
+            expect(() => createTcpServer(mockConnectionManager))
+                .toThrow('No TCP servers could be started. Check SSL configuration or enable unsecure TCP.');
         });
     });
 });

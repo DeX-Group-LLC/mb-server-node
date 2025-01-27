@@ -47,31 +47,71 @@ export class WebSocketConnection implements Connection {
 }
 
 /**
- * Creates and configures a WebSocket server for handling incoming
- * WebSocket connections.
+ * Creates and configures WebSocket server(s) for handling incoming
+ * WebSocket connections. Can create both secure and unsecure servers
+ * based on configuration.
  *
- * @param messageRouter The MessageRouter instance to use for routing messages.
  * @param connectionManager The ConnectionManager instance to use for managing connections.
- * @returns The configured WebSocket server.
+ * @returns Array of configured WebSocket servers.
  */
-export function createWebSocketServer(connectionManager: ConnectionManager): WebSocketServer {
-    let server: http.Server;
+export function createWebSocketServer(connectionManager: ConnectionManager): WebSocketServer[] {
+    const servers: WebSocketServer[] = [];
+
+    // Create secure WebSocket server if SSL is configured
     if (config.ssl && config.ssl.key && config.ssl.cert) {
-        logger.debug('SSL is enabled');
-        const key = fs.readFileSync(config.ssl.key);
-        const cert = fs.readFileSync(config.ssl.cert);
-        server = https.createServer({ key, cert });
+        logger.debug('Creating secure WebSocket server (WSS)');
+        const secureServer = https.createServer({
+            key: fs.readFileSync(config.ssl.key),
+            cert: fs.readFileSync(config.ssl.cert)
+        });
+
+        secureServer.listen(config.ports.wss, config.host, () => {
+            logger.info(`Secure WebSocket server listening on ${config.host}:${config.ports.wss}`);
+        });
+
+        const wss = new WebSocketServer({
+            server: secureServer,
+            maxPayload: config.message.payload.maxLength + MAX_HEADER_LENGTH
+        });
+        setupWebSocketHandlers(wss, connectionManager);
+        servers.push(wss);
     } else {
-        logger.debug('SSL is disabled');
-        server = http.createServer();
+        logger.warn('SSL configuration is missing, secure WebSocket server (WSS) will not be started');
     }
 
-    server.listen(config.ports.websocket, () => {
-        logger.info(`WebSocket server listening on ${config.host}:${config.ports.websocket}${config.ssl ? ' with SSL' : ''}`);
-    });
+    // Create unsecure WebSocket server if explicitly enabled
+    if (config.allowUnsecure) {
+        logger.debug('Creating unsecure WebSocket server (WS) - explicitly enabled in config');
+        const unsecureServer = http.createServer();
 
-    const wss = new WebSocketServer({ server, maxPayload: config.message.payload.maxLength + MAX_HEADER_LENGTH });
+        unsecureServer.listen(config.ports.ws, config.host, () => {
+            logger.info(`Unsecure WebSocket server listening on ${config.host}:${config.ports.ws}`);
+        });
 
+        const ws = new WebSocketServer({
+            server: unsecureServer,
+            maxPayload: config.message.payload.maxLength + MAX_HEADER_LENGTH
+        });
+        setupWebSocketHandlers(ws, connectionManager);
+        servers.push(ws);
+    } else {
+        logger.debug('Unsecure WebSocket server (WS) is disabled');
+    }
+
+    if (servers.length === 0) {
+        throw new InternalError('No WebSocket servers could be started. Check SSL configuration or enable unsecure WebSocket.');
+    }
+
+    return servers;
+}
+
+/**
+ * Sets up the connection and error handlers for a WebSocket server
+ *
+ * @param wss The WebSocket server to configure
+ * @param connectionManager The connection manager to use
+ */
+function setupWebSocketHandlers(wss: WebSocketServer, connectionManager: ConnectionManager): void {
     wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
         const ip = req.socket.remoteAddress || 'unknown';
         logger.info(`Client connected (WebSocket) from IP ${ip}`);
@@ -91,6 +131,4 @@ export function createWebSocketServer(connectionManager: ConnectionManager): Web
     wss.on('error', (error: Error) => {
         logger.error('WebSocket server error:', error);
     });
-
-    return wss;
 }

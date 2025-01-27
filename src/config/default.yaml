@@ -1,7 +1,10 @@
 ports:
-  websocket: 3000
   tcp: 3001
+  tls: 8001
+  ws: 3000
+  wss: 8000
 host: 'localhost'
+allowUnsecure: false
 logging:
   level: 'info'
   format: 'json'
