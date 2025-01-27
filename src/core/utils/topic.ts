@@ -1,5 +1,7 @@
 const TOPIC_NAME_REGEX = /^[a-zA-Z][a-zA-Z0-9]*(\.[a-zA-Z][a-zA-Z0-9]*){0,4}$/; // Limit to 5 levels deep
 
+export const MAX_TOPIC_LENGTH = 255;
+
 /**
  * Validates a topic name against the defined rules.
  *
@@ -16,7 +18,7 @@ const TOPIC_NAME_REGEX = /^[a-zA-Z][a-zA-Z0-9]*(\.[a-zA-Z][a-zA-Z0-9]*){0,4}$/; 
  * @returns True if the topic name is valid, false otherwise.
  */
 export function isValid(name: string): boolean {
-    if (!name || typeof name !== 'string' || name.length > 255) return false;
+    if (!name || typeof name !== 'string' || name.length > MAX_TOPIC_LENGTH) return false;
     return TOPIC_NAME_REGEX.test(name);
 }
 
