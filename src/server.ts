@@ -1,10 +1,12 @@
 import { MessageBroker } from '@core/broker';
-import logger from '@utils/logger';
+import { SetupLogger } from '@utils/logger';
+
+const logger = SetupLogger('Server');
 
 /**
  * Starts the Message Broker server.
  */
-async function startServer() {
+export async function startServer() {
     const messageBroker = new MessageBroker();
 
     // Handle shutdown signals

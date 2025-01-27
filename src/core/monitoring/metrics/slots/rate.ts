@@ -27,6 +27,7 @@ export class RateSlot extends BaseSlot implements ISlotAddable {
                     // Store the current interval's value before reset
                     slot._lastIntervalValue = slot._currentIntervalValue;
                     slot._currentIntervalValue = 0;
+                    slot._lastModified = new Date();
                 }
             }, 1000);
             // Ensure cleanup on exit
@@ -45,6 +46,7 @@ export class RateSlot extends BaseSlot implements ISlotAddable {
      */
     add(value: number): void {
         this._currentIntervalValue += value;
+        // We don't need to update the last modified time here because get value() uses the last interval value
     }
 
     /**
@@ -67,6 +69,7 @@ export class RateSlot extends BaseSlot implements ISlotAddable {
     reset(): void {
         this._lastIntervalValue = 0;
         this._currentIntervalValue = 0;
+        this._lastModified = new Date();
     }
 
     /**

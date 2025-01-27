@@ -15,6 +15,15 @@ export class UptimeSlot extends BaseSlot implements ISlotSettable<Date> {
      */
     set(value: Date): void {
         this._startTime = value;
+        this._lastModified = new Date();
+    }
+
+    /**
+     * Gets the last modified time.
+     * This is overridden to return the latest time, as the uptime slot will always be updated per getter call.
+     */
+    get lastModified(): Date {
+        return new Date();
     }
 
     /**
@@ -37,6 +46,7 @@ export class UptimeSlot extends BaseSlot implements ISlotSettable<Date> {
      */
     reset(): void {
         this._startTime = new Date();
+        this._lastModified = new Date();
     }
 
     /**

@@ -4,6 +4,10 @@
 export interface Config {
     port: number;
     host: string;
+    ssl?: {
+        key?: string;
+        cert?: string;
+    };
     logging: {
         level: string;
         format: string;

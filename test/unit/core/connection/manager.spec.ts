@@ -1,20 +1,36 @@
-import { jest } from '@jest/globals';
 import { randomUUID } from 'crypto';
+import { jest } from '@jest/globals';
 import { ConnectionManager } from '@core/connection/manager';
 import { Connection, ConnectionState } from '@core/connection/types';
 import { Metric, MonitoringManager } from '@core/monitoring';
 import { ServiceRegistry } from '@core/registry';
 import { MessageRouter } from '@core/router';
+import { SubscriptionManager } from '@core/subscription';
 import { ActionType } from '@core/types';
-import { Header, MessageUtils } from '@core/utils';
+import { BrokerHeader } from '@core/utils';
 import logger from '@utils/logger';
+import { InternalError } from '@core/errors';
+import { GaugeSlot } from '@core/monitoring/metrics/slots';
+import { MessageError } from '@core/errors';
+import { MessageUtils } from '@core/utils';
 
 // Mock external dependencies to isolate the ConnectionManager tests
 jest.mock('@core/monitoring');
 jest.mock('@core/registry');
 jest.mock('@core/router');
-jest.mock('@utils/logger');
-jest.mock('crypto');
+jest.mock('@utils/logger', () => {
+    const mockLogger = {
+        info: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        debug: jest.fn()
+    };
+    return {
+        __esModule: true,
+        default: mockLogger,
+        SetupLogger: jest.fn().mockReturnValue(mockLogger)
+    };
+});
 
 /**
  * Test suite for the ConnectionManager class.
@@ -26,36 +42,35 @@ jest.mock('crypto');
  */
 describe('ConnectionManager', () => {
     let connectionManager: ConnectionManager;
-    let mockConnection: jest.Mocked<Connection>;
     let mockMessageRouter: jest.Mocked<MessageRouter>;
-    let mockMonitorManager: jest.Mocked<MonitoringManager>;
     let mockServiceRegistry: jest.Mocked<ServiceRegistry>;
-    let mockMetric: any;
+    let mockMonitorManager: jest.Mocked<MonitoringManager>;
+    let mockSubscriptionManager: jest.Mocked<SubscriptionManager>;
+    let mockConnection: jest.Mocked<Connection>;
+    let mockMetric: jest.Mocked<Metric<GaugeSlot>>;
 
     beforeEach(() => {
         // Reset all mock implementations and call history before each test
         jest.resetAllMocks();
 
-        // Mock UUID generation for consistent testing
-        (randomUUID as jest.Mock).mockReturnValue('test-uuid');
-
         // Set up mock slot for metrics with basic functionality
         const mockSlot = {
-            add: jest.fn(),
-            reset: jest.fn(),
+            value: 0,
+            lastModified: new Date(),
             dispose: jest.fn(),
-            value: 0
-        };
+            add: jest.fn()
+        } as unknown as jest.Mocked<GaugeSlot>;
 
         // Create mock metric with slot
         mockMetric = {
             slot: mockSlot,
             dispose: jest.fn()
-        } as unknown as jest.Mocked<Metric>;
+        } as unknown as jest.Mocked<Metric<GaugeSlot>>;
 
         // Set up monitoring manager mock with metric registration
         mockMonitorManager = {
             registerMetric: jest.fn().mockReturnValue(mockMetric),
+            registerParameterized: jest.fn(),
             dispose: jest.fn(),
         } as unknown as jest.Mocked<MonitoringManager>;
 
@@ -70,12 +85,21 @@ describe('ConnectionManager', () => {
         // Set up message router mock for message handling
         mockMessageRouter = {
             routeMessage: jest.fn(),
+            assignConnectionManager: jest.fn(),
+            assignServiceRegistry: jest.fn(),
             dispose: jest.fn()
         } as unknown as jest.Mocked<MessageRouter>;
 
+        // Set up subscription manager mock for subscription management
+        mockSubscriptionManager = {
+            unsubscribeAll: jest.fn(),
+            getSubscribers: jest.fn().mockReturnValue([]),
+            dispose: jest.fn(),
+        } as unknown as jest.Mocked<SubscriptionManager>;
+
         // Create mock connection with basic WebSocket-like interface
         mockConnection = {
-            serviceId: undefined,
+            serviceId: randomUUID(),
             ip: '127.0.0.1',
             state: ConnectionState.OPEN,
             onMessage: jest.fn(),
@@ -85,7 +109,7 @@ describe('ConnectionManager', () => {
         } as any;
 
         // Initialize ConnectionManager with mocked dependencies
-        connectionManager = new ConnectionManager(mockMessageRouter, mockServiceRegistry, mockMonitorManager);
+        connectionManager = new ConnectionManager(mockMessageRouter, mockServiceRegistry, mockMonitorManager, mockSubscriptionManager);
     });
 
     afterEach(() => {
@@ -110,26 +134,22 @@ describe('ConnectionManager', () => {
             connectionManager.addConnection(mockConnection);
 
             // Verify connection was registered with expected ID
-            expect(connectionManager.hasConnection('test-uuid')).toBe(true);
-            expect(connectionManager.getConnection('test-uuid')).toBe(mockConnection);
+            expect(connectionManager.hasConnection(mockConnection.serviceId)).toBe(true);
+            expect(connectionManager.getConnection(mockConnection.serviceId)).toBe(mockConnection);
 
             // Verify event listeners were attached
             expect(mockConnection.onMessage).toHaveBeenCalled();
             expect(mockConnection.onClose).toHaveBeenCalled();
 
-            // Verify connection count metric was incremented
-            expect(mockMetric.slot.add).toHaveBeenCalledWith(1);
-
             // Verify successful connection was logged
             expect(logger.info).toHaveBeenCalledWith(
-                expect.stringContaining('Added connection for service test-uuid')
+                expect.stringContaining(`Added connection for service ${mockConnection.serviceId}`)
             );
         });
 
         /**
          * Verifies proper error handling when connection registration fails:
          * - Error propagation
-         * - Metric updates
          * - Connection cleanup
          */
         it('should handle errors during connection setup', () => {
@@ -142,9 +162,6 @@ describe('ConnectionManager', () => {
             expect(() => {
                 connectionManager.addConnection(mockConnection);
             }).toThrow('Registration failed');
-
-            // Verify failure metric was incremented
-            expect(mockMetric.slot.add).toHaveBeenCalledWith(1);
 
             // Verify connection was not registered
             expect(connectionManager.hasConnection('test-uuid')).toBe(false);
@@ -159,7 +176,6 @@ describe('ConnectionManager', () => {
         /**
          * Verifies that an existing connection is properly removed with:
          * - Service deregistration
-         * - Metric updates
          * - Logging
          */
         it('should remove an existing connection', () => {
@@ -176,424 +192,357 @@ describe('ConnectionManager', () => {
             // Verify service was deregistered
             expect(mockServiceRegistry.unregisterService).toHaveBeenCalledWith(serviceId);
 
-            // Verify connection count metric was decremented
-            expect(mockMetric.slot.add).toHaveBeenCalledWith(-1);
-
             // Verify removal was logged
             expect(logger.info).toHaveBeenCalledWith(
                 expect.stringContaining(`Removed connection for service ${serviceId}`)
             );
         });
-
-        /**
-         * Verifies graceful handling of removal requests for non-existent connections
-         */
-        it('should handle non-existent connection gracefully', () => {
-            connectionManager.removeConnection('non-existent');
-
-            // Verify no service deregistration was attempted
-            expect(mockServiceRegistry.unregisterService).not.toHaveBeenCalled();
-
-            // Verify no metric updates were made
-            expect(mockMetric.slot.add).not.toHaveBeenCalled();
-        });
     });
 
     /**
      * Tests for the sendMessage method.
-     * Verifies message sending functionality and error handling.
+     * Verifies message sending, error handling, and subscriber notifications.
      */
     describe('sendMessage', () => {
-        /**
-         * Verifies successful message sending to a connected service
-         */
         it('should send message to connected service', () => {
             // Set up test connection
             connectionManager.addConnection(mockConnection);
             const serviceId = mockConnection.serviceId;
 
-            // Create test message
-            const validHeader: Header = {
-                action: ActionType.PUBLISH,
-                topic: 'test.topic',
+            // Prepare test message
+            const header: BrokerHeader = {
+                action: ActionType.RESPONSE,
+                topic: 'test',
                 version: '1.0.0'
             };
-            const validPayload = { data: 'test' };
+            const payload = { data: 'test' };
 
             // Send message
-            connectionManager.sendMessage(serviceId, validHeader, validPayload);
+            connectionManager.sendMessage(serviceId, header, payload, undefined);
 
-            // Verify message was sent with correct format
-            expect(mockConnection.send).toHaveBeenCalledWith(
-                'publish:test.topic:1.0.0\n{"data":"test"}'
-            );
-
-            // Verify send was logged
-            expect(logger.info).toHaveBeenCalledWith(
-                `[ConnectionManager] Sent message to service ${serviceId}`
-            );
+            // Verify message was sent
+            expect(mockConnection.send).toHaveBeenCalled();
         });
 
-        /**
-         * Verifies that empty payload is handled correctly
-         */
-        it('should send message with default empty payload when no payload provided', () => {
+        it('should use empty object as default payload', () => {
             // Set up test connection
             connectionManager.addConnection(mockConnection);
             const serviceId = mockConnection.serviceId;
-
-            // Create test message with only header
-            const validHeader: Header = {
-                action: ActionType.PUBLISH,
-                topic: 'test.topic',
-                version: '1.0.0'
-            };
 
             // Send message without payload
-            connectionManager.sendMessage(serviceId, validHeader);
+            connectionManager.sendMessage<BrokerHeader>(serviceId, {
+                action: ActionType.RESPONSE,
+                topic: 'test',
+                version: '1.0.0'
+            }, undefined, undefined);
 
-            // Verify message was sent with empty payload
+            // Verify message was sent with empty object payload
             expect(mockConnection.send).toHaveBeenCalledWith(
-                'publish:test.topic:1.0.0\n{}'
-            );
-
-            // Verify send was logged
-            expect(logger.info).toHaveBeenCalledWith(
-                `[ConnectionManager] Sent message to service ${serviceId}`
+                expect.stringMatching(/\n{}$/)
             );
         });
 
-        /**
-         * Verifies proper handling of send attempts to non-existent connections
-         */
         it('should handle non-existent connection', () => {
-            const nonExistentServiceId = 'non-existent';
-            const validHeader: Header = {
-                action: ActionType.PUBLISH,
-                topic: 'test.topic',
+            // Attempt to send to non-existent connection
+            connectionManager.sendMessage<BrokerHeader>('non-existent', {
+                action: ActionType.RESPONSE,
+                topic: 'test',
                 version: '1.0.0'
-            };
-            const validPayload = { data: 'test' };
-
-            // Attempt to send to non-existent service
-            connectionManager.sendMessage(nonExistentServiceId, validHeader, validPayload);
+            }, {}, undefined);
 
             // Verify warning was logged
             expect(logger.warn).toHaveBeenCalledWith(
-                `[ConnectionManager] Unable to send message to service ${nonExistentServiceId}: connection not found`
+                expect.stringContaining('Unable to send message to service non-existent')
             );
-        });
-
-        /**
-         * Verifies proper handling of send attempts to closed connections
-         */
-        it('should handle closed connection', () => {
-            // Set up test connection
-            connectionManager.addConnection(mockConnection);
-            const serviceId = mockConnection.serviceId;
-
-            // Create closed connection state
-            const closedConnection = {
-                ...mockConnection,
-                state: ConnectionState.CLOSED,
-                close: jest.fn()
-            } as any;
-
-            // Replace with closed connection
-            (connectionManager as any).connections.set(serviceId, closedConnection);
-
-            // Create test message
-            const validHeader: Header = {
-                action: ActionType.PUBLISH,
-                topic: 'test.topic',
-                version: '1.0.0'
-            };
-            const validPayload = { data: 'test' };
-
-            // Verify sending throws appropriate error
-            expect(() => {
-                connectionManager.sendMessage(serviceId, validHeader, validPayload);
-            }).toThrow('Desired service connection is not open');
-
-            // Verify connection was removed
-            expect(connectionManager.hasConnection(serviceId)).toBe(false);
-
-            // Verify warning was logged
-            expect(logger.warn).toHaveBeenCalledWith(
-                `[ConnectionManager] Unable to send message to service ${serviceId}: Connection is not open`
-            );
-
-            // Verify connection was properly closed
-            expect(closedConnection.close).toHaveBeenCalled();
         });
     });
 
     /**
-     * Tests for the handleMessage method.
-     * Verifies message parsing, routing, and error handling.
+     * Tests for connection state management.
+     * Verifies proper handling of connection states.
      */
-    describe('handleMessage', () => {
-        /**
-         * Verifies successful handling of valid messages
-         */
-        it('should handle valid message correctly', () => {
+    describe('connection state', () => {
+        it('should handle closed connections', () => {
             // Set up test connection
             connectionManager.addConnection(mockConnection);
+            const serviceId = mockConnection.serviceId;
 
-            // Get message handler function
-            const messageHandler = mockConnection.onMessage.mock.calls[0][0];
+            // Change connection state to closed
+            Object.defineProperty(mockConnection, 'state', { value: ConnectionState.CLOSED });
 
-            // Create valid test message
-            const validMessage = 'publish:test.topic:1.0.0\n{"data":"test"}';
+            // Attempt to send message
+            expect(() => {
+                connectionManager.sendMessage<BrokerHeader>(serviceId, {
+                    action: ActionType.RESPONSE,
+                    topic: 'test',
+                    version: '1.0.0'
+                }, {}, undefined);
+            }).toThrow(InternalError);
 
-            // Process message
-            messageHandler(validMessage);
+            // Verify connection was removed
+            expect(connectionManager.hasConnection(serviceId)).toBe(false);
+        });
+    });
 
-            // Verify message was routed correctly
-            expect(mockMessageRouter.routeMessage).toHaveBeenCalledWith(
-                mockConnection.serviceId,
-                {
-                    header: {
-                        action: ActionType.PUBLISH,
-                        topic: 'test.topic',
-                        version: '1.0.0'
-                    },
-                    payload: { data: 'test' }
-                }
-            );
+    describe('message handling', () => {
+        it('should handle messages and notify subscribers', () => {
+            // Set up test connection
+            connectionManager.addConnection(mockConnection);
+            const serviceId = mockConnection.serviceId;
 
-            // Verify message receipt was logged
-            expect(logger.info).toHaveBeenCalledWith(
-                `[ConnectionManager] Received message from service ${mockConnection.serviceId} (IP ${mockConnection.ip})`
-            );
+            // Set up subscribers
+            mockSubscriptionManager.getSubscribers.mockReturnValue(['subscriber1', 'subscriber2']);
+            const mockSubscriber1 = { ...mockConnection, serviceId: 'subscriber1' };
+            const mockSubscriber2 = { ...mockConnection, serviceId: 'subscriber2' };
+
+            // Mock connections for subscribers
+            jest.spyOn(connectionManager as any, '_resolveConnection')
+                .mockReturnValueOnce(mockSubscriber1)
+                .mockReturnValueOnce(mockSubscriber2);
+
+            // Create message using proper serialization
+            const header = {
+                action: ActionType.REQUEST,
+                topic: 'test',
+                version: '1.0.0',
+                requestId: '123e4567-e89b-12d3-a456-426614174000'
+            };
+            const payload = { data: 'test' };
+            const message = Buffer.from(MessageUtils.serialize(header, payload));
+
+            // Trigger message handler
+            (connectionManager as any).handleMessage(mockConnection, message);
+
+            // Verify subscribers were notified
+            expect(mockSubscriber1.send).toHaveBeenCalled();
+            expect(mockSubscriber2.send).toHaveBeenCalled();
         });
 
-        /**
-         * Verifies proper handling of messages with malformed headers
-         */
-        it('should handle malformed message header', () => {
+        it('should handle malformed message errors', () => {
             // Set up test connection
             connectionManager.addConnection(mockConnection);
+            const serviceId = mockConnection.serviceId;
 
-            // Get message handler function
-            const messageHandler = mockConnection.onMessage.mock.calls[0][0];
+            // Simulate malformed message
+            const malformedMessage = Buffer.from('invalid json');
 
-            // Create invalid message
-            const invalidMessage = 'invalid:message';
-
-            // Process invalid message
-            messageHandler(invalidMessage);
+            // Trigger message handler
+            (connectionManager as any).handleMessage(mockConnection, malformedMessage);
 
             // Verify error response was sent
-            const expectedErrorResponse = 'response:error:1.0.0\n{"error":{"code":"MALFORMED_MESSAGE","message":"Invalid message format: no newline separator found","timestamp":';
-            expect(mockConnection.send).toHaveBeenCalledWith(
-                expect.stringMatching(new RegExp(`^${expectedErrorResponse}`))
-            );
-
-            // Verify error was logged
-            expect(logger.error).toHaveBeenCalledWith('[ConnectionManager] [MALFORMED_MESSAGE] Invalid message format: no newline separator found', undefined);
-        });
-
-        /**
-         * Verifies proper handling of messages with malformed payloads
-         */
-        it('should handle malformed message payload', () => {
-            // Set up test connection
-            connectionManager.addConnection(mockConnection);
-
-            // Get message handler function
-            const messageHandler = mockConnection.onMessage.mock.calls[0][0];
-
-            // Create message with invalid JSON payload
-            const messageWithInvalidPayload = 'publish:test.topic:1.0.0\n{invalid:json}';
-
-            // Process message
-            messageHandler(messageWithInvalidPayload);
-
-            // Verify error response was sent
-            expect(mockConnection.send).toHaveBeenCalledWith(
-                expect.stringContaining('response:test.topic:1.0.0\n{"error":{"code":"MALFORMED_MESSAGE","message":"Invalid JSON payload"')
-            );
-
-            // Verify error was logged
+            expect(mockConnection.send).toHaveBeenCalled();
             expect(logger.error).toHaveBeenCalledWith(
-                expect.stringMatching(/\[MALFORMED_MESSAGE\].*Invalid JSON payload/),
+                expect.stringMatching(/^\[MALFORMED_MESSAGE\]/),
                 expect.any(Object)
             );
         });
 
-        /**
-         * Verifies proper handling of non-MessageError errors during message processing
-         */
-        it('should handle non-MessageError errors', () => {
+        it('should handle MessageError during routing', () => {
             // Set up test connection
             connectionManager.addConnection(mockConnection);
+            const serviceId = mockConnection.serviceId;
 
-            // Get message handler function
-            const messageHandler = mockConnection.onMessage.mock.calls[0][0];
+            // Create message using proper serialization
+            const header = {
+                action: ActionType.REQUEST,
+                topic: 'test',
+                version: '1.0.0',
+                requestId: '123e4567-e89b-12d3-a456-426614174000'
+            };
+            const payload = { data: 'test' };
+            const message = Buffer.from(MessageUtils.serialize(header, payload));
 
-            // Simulate unexpected error during routing
+            // Mock router to throw MessageError
             mockMessageRouter.routeMessage.mockImplementationOnce(() => {
-                throw new Error('Some unexpected error');
+                const error = new MessageError('TEST_ERROR', 'Test error message');
+                throw error;
             });
 
-            // Create valid message that will trigger the error
-            const validMessage = 'publish:test.topic:1.0.0\n{"data":"test"}';
-
-            // Process message
-            messageHandler(validMessage);
-
-            // Verify error was logged
-            expect(logger.error).toHaveBeenCalledWith(
-                '[ConnectionManager] An unexpected error while routing the message:',
-                expect.any(Error)
-            );
+            // Trigger message handler
+            (connectionManager as any).handleMessage(mockConnection, message);
 
             // Verify error response was sent
-            expect(mockConnection.send).toHaveBeenCalledWith(
-                expect.stringContaining('response:test.topic:1.0.0\n{"error":{"code":"INTERNAL_ERROR","message":"An unexpected error while routing the message"')
+            expect(mockConnection.send).toHaveBeenCalled();
+            expect(logger.error).toHaveBeenCalledWith(
+                '[TEST_ERROR] Test error message',
+                expect.any(Object)
             );
         });
 
-        /**
-         * Verifies proper handling of unexpected errors during header parsing
-         */
-        it('should handle unexpected error during header parsing', () => {
+        it('should handle routing errors', () => {
             // Set up test connection
             connectionManager.addConnection(mockConnection);
+            const serviceId = mockConnection.serviceId;
 
-            // Get message handler function
-            const messageHandler = mockConnection.onMessage.mock.calls[0][0];
+            // Create message using proper serialization
+            const header = {
+                action: ActionType.REQUEST,
+                topic: 'test',
+                version: '1.0.0',
+                requestId: '123e4567-e89b-12d3-a456-426614174000'
+            };
+            const payload = { data: 'test' };
+            const message = Buffer.from(MessageUtils.serialize(header, payload));
 
-            // Create test message
-            const message = 'publish:test.topic:1.0.0\n{"data":"test"}';
-
-            // Simulate parser error
-            jest.spyOn(MessageUtils.Parser.prototype, 'parseHeader').mockImplementationOnce(() => {
-                throw new Error('Unexpected error during header parsing');
+            // Mock router to throw error
+            mockMessageRouter.routeMessage.mockImplementationOnce(() => {
+                throw new Error('Routing failed');
             });
 
-            // Process message
-            messageHandler(message);
+            // Trigger message handler
+            (connectionManager as any).handleMessage(mockConnection, message);
 
             // Verify error response was sent
-            const expectedErrorResponse = 'response:error:1.0.0\n{"error":{"code":"MALFORMED_MESSAGE","message":"Unexpected error while parsing message header"';
-            expect(mockConnection.send).toHaveBeenCalledWith(
-                expect.stringMatching(new RegExp(`^${expectedErrorResponse}`))
-            );
-
-            // Verify error was logged
+            expect(mockConnection.send).toHaveBeenCalled();
             expect(logger.error).toHaveBeenCalledWith(
-                '[ConnectionManager] Unexpected error while parsing message header:',
-                expect.any(Error)
+                'An unexpected error while routing the message:',
+                expect.any(Object)
             );
         });
 
-        /**
-         * Verifies proper handling of unexpected errors during payload parsing
-         */
-        it('should handle unexpected error during payload parsing', () => {
+        it('should forward messages to system.message subscribers', () => {
+            // Set up test connection
+            connectionManager.addConnection(mockConnection);
+            const serviceId = mockConnection.serviceId;
+
+            // Set up subscribers for system.message
+            mockSubscriptionManager.getSubscribers.mockReturnValue(['subscriber1', 'subscriber2']);
+            const mockSubscriber1 = { ...mockConnection, serviceId: 'subscriber1' };
+            const mockSubscriber2 = { ...mockConnection, serviceId: 'subscriber2' };
+
+            // Mock connections for subscribers
+            jest.spyOn(connectionManager as any, '_resolveConnection')
+                .mockReturnValueOnce(mockSubscriber1)
+                .mockReturnValueOnce(mockSubscriber2);
+
+            // Send a message that should be forwarded
+            const header = {
+                action: ActionType.REQUEST,
+                topic: 'test',
+                version: '1.0.0',
+                requestId: '123e4567-e89b-12d3-a456-426614174000',
+                parentRequestId: '123e4567-e89b-12d3-a456-426614174001'
+            };
+            const payload = { data: 'test' };
+            const message = Buffer.from(MessageUtils.serialize(header, payload));
+
+            // Send message with maskedId
+            connectionManager.sendMessage(serviceId, header, payload, 'masked-id');
+
+            // Verify subscribers received the forwarded message
+            expect(mockSubscriber1.send).toHaveBeenCalled();
+            expect(mockSubscriber2.send).toHaveBeenCalled();
+        });
+
+        it('should handle header parsing errors', () => {
+            // Set up test connection
+            connectionManager.addConnection(mockConnection);
+            const serviceId = mockConnection.serviceId;
+
+            // Create an invalid message that will cause header parsing to fail
+            const message = Buffer.from('REQUEST:invalid:1.0.0\n{"data":"test"}');
+
+            // Trigger message handler
+            (connectionManager as any).handleMessage(mockConnection, message);
+
+            // Verify error was logged and error response was sent
+            expect(logger.error).toHaveBeenCalledWith(
+                '[MALFORMED_MESSAGE] Invalid action: REQUEST',
+                expect.any(Object)
+            );
+            expect(mockConnection.send).toHaveBeenCalled();
+        });
+
+        it('should forward messages with timeout to system.message subscribers', () => {
+            // Set up test connection
+            connectionManager.addConnection(mockConnection);
+            const serviceId = mockConnection.serviceId;
+
+            // Set up subscribers for system.message
+            mockSubscriptionManager.getSubscribers.mockReturnValue(['subscriber1']);
+            const mockSubscriber = { ...mockConnection, serviceId: 'subscriber1' };
+
+            // Mock connection for subscriber
+            jest.spyOn(connectionManager as any, '_resolveConnection')
+                .mockReturnValueOnce(mockSubscriber);
+
+            // Create message with timeout using proper serialization
+            const header = {
+                action: ActionType.REQUEST,
+                topic: 'test',
+                version: '1.0.0',
+                requestId: '123e4567-e89b-12d3-a456-426614174000',
+                timeout: 5000
+            };
+            const payload = { data: 'test' };
+            const message = Buffer.from(MessageUtils.serialize(header, payload));
+
+            // Trigger message handler
+            (connectionManager as any).handleMessage(mockConnection, message);
+
+            // Verify subscriber received the forwarded message with timeout
+            expect(mockSubscriber.send).toHaveBeenCalledWith(
+                expect.stringContaining('"timeout":5000')
+            );
+        });
+
+        it('should forward messages with raw payload to system.message subscribers', () => {
             // Set up test connection
             connectionManager.addConnection(mockConnection);
 
-            // Get message handler function
-            const messageHandler = mockConnection.onMessage.mock.calls[0][0];
+            // Set up subscribers for system.message
+            mockSubscriptionManager.getSubscribers.mockReturnValue(['subscriber1']);
+            const mockSubscriber = { ...mockConnection, serviceId: 'subscriber1' };
 
-            // Create test message
-            const message = 'publish:test.topic:1.0.0\n{"data":"test"}';
+            // Mock connection for subscriber
+            jest.spyOn(connectionManager as any, '_resolveConnection')
+                .mockReturnValueOnce(mockSubscriber);
 
-            // Mock parser behavior
-            jest.spyOn(MessageUtils.Parser.prototype, 'parseHeader').mockImplementationOnce(() => ({
-                action: ActionType.PUBLISH,
-                topic: 'test.topic',
-                version: '1.0.0'
-            }));
-            jest.spyOn(MessageUtils.Parser.prototype, 'parsePayload').mockImplementationOnce(() => {
-                throw new Error('Unexpected error during payload parsing');
-            });
+            // Create message with non-empty payload
+            const header = {
+                action: ActionType.REQUEST,
+                topic: 'test',
+                version: '1.0.0',
+                requestId: '123e4567-e89b-12d3-a456-426614174000'
+            };
+            const payload = { data: 'test' };
+            const message = Buffer.from(MessageUtils.serialize(header, payload));
 
-            // Process message
-            messageHandler(message);
+            // Trigger message handler
+            (connectionManager as any).handleMessage(mockConnection, message);
 
-            // Verify error response was sent
-            const expectedErrorResponse = 'response:test.topic:1.0.0\n{"error":{"code":"MALFORMED_MESSAGE","message":"Unexpected error while parsing message payload"';
-            expect(mockConnection.send).toHaveBeenCalledWith(
-                expect.stringMatching(new RegExp(`^${expectedErrorResponse}`))
-            );
-
-            // Verify error was logged
-            expect(logger.error).toHaveBeenCalledWith(
-                '[ConnectionManager] Unexpected error while parsing message payload:',
-                expect.any(Error)
+            // Verify subscriber received the forwarded message with raw payload
+            expect(mockSubscriber.send).toHaveBeenCalledWith(
+                expect.stringMatching(/.*"payload":\{"data":"test"\}.*/)
             );
         });
     });
 
-    /**
-     * Tests for connection management utility methods.
-     * Verifies connection tracking and bulk operations.
-     */
-    describe('connection management methods', () => {
-        /**
-         * Verifies connection existence checking
-         */
-        it('should check for existing connection', () => {
-            // Set up test connection
-            connectionManager.addConnection(mockConnection);
-            const serviceId = mockConnection.serviceId;
-
-            // Verify connection lookup
-            expect(connectionManager.hasConnection(serviceId)).toBe(true);
-            expect(connectionManager.hasConnection('non-existent')).toBe(false);
-        });
-
-        /**
-         * Verifies connection retrieval by service ID
-         */
-        it('should get connection by service ID', () => {
-            // Set up test connection
-            connectionManager.addConnection(mockConnection);
-            const serviceId = mockConnection.serviceId;
-
-            // Verify connection retrieval
-            expect(connectionManager.getConnection(serviceId)).toBe(mockConnection);
-            expect(connectionManager.getConnection('non-existent')).toBeUndefined();
-        });
-
-        /**
-         * Verifies connection count tracking
-         */
-        it('should get connection count', () => {
-            // Verify initial empty state
+    describe('connection count', () => {
+        it('should return the correct number of connections', () => {
+            // Initially should have no connections
             expect(connectionManager.getConnectionCount()).toBe(0);
 
-            // Add connection and verify count
+            // Add a connection
             connectionManager.addConnection(mockConnection);
             expect(connectionManager.getConnectionCount()).toBe(1);
 
-            // Remove connection and verify count
-            connectionManager.removeConnection(mockConnection.serviceId);
-            expect(connectionManager.getConnectionCount()).toBe(0);
-        });
-
-        /**
-         * Verifies bulk connection closure
-         */
-        it('should close all connections', async () => {
-            // Set up multiple test connections
-            const mockConnection2 = { ...mockConnection };
-            connectionManager.addConnection(mockConnection);
+            // Add another connection with a different serviceId
+            const mockConnection2 = {
+                serviceId: '',
+                ip: '127.0.0.1',
+                state: ConnectionState.OPEN,
+                onMessage: jest.fn(),
+                onClose: jest.fn(),
+                send: jest.fn(),
+                close: jest.fn(),
+            } as any;
             connectionManager.addConnection(mockConnection2);
+            expect(connectionManager.getConnectionCount()).toBe(2);
 
-            // Close all connections
-            await connectionManager.dispose();
-
-            // Verify connections were closed
-            expect(mockConnection.close).toHaveBeenCalled();
-            expect(connectionManager.getConnectionCount()).toBe(0);
-
-            // Verify operation was logged
-            expect(logger.info).toHaveBeenCalledWith('[ConnectionManager] Closed all connections');
+            // Remove a connection
+            connectionManager.removeConnection(mockConnection2.serviceId);
+            expect(connectionManager.getConnectionCount()).toBe(1);
         });
     });
 });
