@@ -1,7 +1,8 @@
 import { Server } from 'net';
+import { WebSocketServer } from 'ws';
 import { config } from '@config';
 import { ConnectionManager } from '@core/connection/manager';
-import { CombinedServer, createCombinedServer } from '@core/connection/protocols';
+import { createTcpServer, createWebSocketServer } from '@core/connection/protocols';
 import { MonitoringManager } from '@core/monitoring';
 import { ServiceRegistry } from '@core/registry';
 import { MessageRouter } from '@core/router';
@@ -12,7 +13,8 @@ import { SystemManager } from './system/manager';
 const logger = SetupLogger('MessageBroker');
 
 export class MessageBroker {
-    private server: CombinedServer;
+    private tcpServer: Server;
+    private wsServer: WebSocketServer;
     private connectionManager: ConnectionManager;
     private messageRouter: MessageRouter;
     private monitorManager: MonitoringManager;
@@ -34,7 +36,11 @@ export class MessageBroker {
         this.serviceRegistry.assignConnectionManager(this.connectionManager);
         this.messageRouter.assignConnectionManager(this.connectionManager);
         this.messageRouter.assignServiceRegistry(this.serviceRegistry);
-        this.server = createCombinedServer(this.connectionManager);
+
+        // Create TCP and WebSocket servers
+        this.tcpServer = createTcpServer(this.connectionManager);
+        this.wsServer = createWebSocketServer(this.connectionManager);
+
         this.createdAt = new Date();
         logger.info(`Created at ${this.createdAt.toISOString()}`);
     }
@@ -65,7 +71,8 @@ export class MessageBroker {
 
         // Stop all servers
         try {
-            await this.server.close();
+            await this.tcpServer.close();
+            await this.wsServer.close();
             logger.info('All servers closed');
         } catch (error) {
             logger.error('Error closing servers', { error });

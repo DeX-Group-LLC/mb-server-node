@@ -36,14 +36,14 @@ function frameTcpMessage(message: string): Buffer {
 }
 
 // Create WebSocket connections based on configuration
-const requester = ENABLE_REQUESTER ? new WebSocket(`${process.env.WS_PROTOCOL ?? 'ws'}://${config.host}:${config.port}`) : null;
-const listener = ENABLE_LISTENER ? new WebSocket(`${process.env.WS_PROTOCOL ?? 'ws'}://${config.host}:${config.port}`) : null;
+const requester = ENABLE_REQUESTER ? new WebSocket(`${process.env.WS_PROTOCOL ?? 'ws'}://${config.host}:${config.ports.websocket}`) : null;
+const listener = ENABLE_LISTENER ? new WebSocket(`${process.env.WS_PROTOCOL ?? 'ws'}://${config.host}:${config.ports.websocket}`) : null;
 
 // Create TCP/TLS connection for responder
 const responder = ENABLE_RESPONDER ? (process.env.WS_PROTOCOL === 'wss'
     ? tlsConnect({
         host: config.host,
-        port: config.port,
+        port: config.ports.tcp,
         rejectUnauthorized: false
     })
     : new Socket())
@@ -159,7 +159,7 @@ if (responder) {
 
     // Connect to the server (only for non-TLS connections)
     if (process.env.WS_PROTOCOL !== 'wss') {
-        responder.connect(config.port, config.host);
+        responder.connect(config.ports.tcp, config.host);
     }
 }
 

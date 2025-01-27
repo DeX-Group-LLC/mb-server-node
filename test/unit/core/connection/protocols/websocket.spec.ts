@@ -20,6 +20,13 @@ jest.mock('@config', () => ({
             payload: {
                 maxLength: 32 * 1024
             }
+        },
+        request: {
+            response: {
+                timeout: {
+                    max: 30000 // Adding default 30 second max timeout
+                }
+            }
         }
     }
 }));

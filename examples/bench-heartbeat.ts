@@ -164,7 +164,7 @@ async function performMainBenchmark(ws: WebSocket, initialRate: number): Promise
  * A WebSocket client that sends multiple metrics requests for testing.
  */
 async function runBenchmark() {
-    const ws = new WebSocket(`ws://${config.host}:${config.port}`);
+    const ws = new WebSocket(`ws://${config.host}:${config.ports.websocket}`);
 
     return new Promise((resolve, reject) => {
         ws.on('open', async () => {

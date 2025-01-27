@@ -23,7 +23,8 @@ export function loadConfig(configPath: string = DEFAULT_CONFIG_PATH): Config {
         const config = yaml.load(configFile) as Config;
 
         // Override with environment variables (if set).
-        if (process.env.PORT) config.port = parseInt(process.env.PORT, 10);
+        if (process.env.WEBSOCKET_PORT) config.ports.websocket = parseInt(process.env.WEBSOCKET_PORT, 10);
+        if (process.env.TCP_PORT) config.ports.tcp = parseInt(process.env.TCP_PORT, 10);
         if (process.env.HOST) config.host = process.env.HOST;
         if (process.env.SSL_KEY && process.env.SSL_CERT) {
             config.ssl = {
