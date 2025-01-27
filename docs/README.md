@@ -35,8 +35,9 @@ Welcome to the MB Server Node documentation. This documentation provides compreh
 
 ### Operations
 - [Deployment](operations/deployment.md) - Production deployment instructions
+- [Heartbeat System](operations/heartbeat.md) - Service health monitoring system
 - [Monitoring](operations/monitoring.md) - Monitoring and metrics
-- [Security](operations/security.md) - Security best practices
+- [System Messages](operations/system-messages.md) - Internal system message documentation
 
 ### Troubleshooting
 - [Overview](troubleshooting/README.md) - Common issues and solutions

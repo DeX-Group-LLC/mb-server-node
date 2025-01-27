@@ -2,8 +2,14 @@
 
 This guide explains the core concepts and terminology used in MB Server Node.
 
-## Topics
+## Documentation
 
+### Core Components
+- [Architecture](./architecture.md) - System architecture and components
+- [Glossary](./glossary.md) - Terms and definitions
+- [Message Flow](./message-flow.md) - How messages flow through the system
+
+### Message Topics
 Topics are hierarchical strings separated by dots (e.g., `"company.department.service"`). They are used to organize and route messages.
 
 Example topic patterns:
