@@ -73,9 +73,7 @@ export class TCPSocketConnection implements Connection {
             this.expectedLength = -1;
 
             // Emit the message
-            if (this.messageListener) {
-                this.messageListener(message);
-            }
+            this.messageListener?.(message);
 
             // If no more data to process, break
             if (this.buffer.length < 4) break;
@@ -110,6 +108,7 @@ export class TCPSocketConnection implements Connection {
         if (this.state === ConnectionState.OPEN) {
             this.socket.end();
             this.isConnected = false;
+            this.closeListener?.();
         }
     }
 }
