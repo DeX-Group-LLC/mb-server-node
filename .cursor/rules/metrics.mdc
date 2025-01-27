@@ -1,0 +1,50 @@
+---
+description: Rules for Adding/Modifying Metrics in a Module
+globs: *.ts
+---
+# Rules for Adding/Modifying Metrics in a Module
+
+1. **Metric Registration:** Register every new metric using the `monitoringManager`. Use `this.monitoringManager.registerMetric` for single metrics and `this.monitoringManager.registerParameterized` for parameterized metrics within the module's `metrics.ts` file.
+
+2. **Metric Storage:**
+    * Use `Metric` to store a single metric.
+    * Use `ParameterizedMetric` to store a collection of metrics that share a common name but are differentiated by a parameter (e.g., `serviceId`). Each unique parameter value represents a distinct metric within the collection.
+
+3. **Slot Selection:** Choose the correct `Slot` class for each metric from the available options in `src/core/monitoring/metrics/slots`:
+    * `GaugeSlot`: Use when you need to set the metric's value directly. Suitable for representing totals, current values, or any metric that can be directly assigned a value.
+    * `RateSlot`: Use when you want to track a rate (per second). Add delta values to the `RateSlot`, and it will automatically calculate and manage the rate.
+    * `UptimeSlot`: Use when you want to track the duration (in seconds) since a specific date or event.
+
+4. **Alphabetical Ordering:**
+    * **Metric Class Properties:** List metrics in the `Metrics` class in alphabetical order by their names. For example:
+
+        ```typescript
+        public readonly cpuUsage: Metric<GaugeSlot>;
+        public readonly diskFree: Metric<GaugeSlot>;
+        public readonly diskIOTime: Metric<RateSlot>;
+        public readonly memoryUsed: Metric<GaugeSlot>;
+        public readonly networkErrorRate: ParameterizedMetric<RateSlot>;
+        public readonly requestLatency: Metric<GaugeSlot>;
+        ```
+
+    * **Metrics Class Constructor:** Register metrics in the `Metrics` class constructor in alphabetical order by their names. For example:
+
+        ```typescript
+        // In the Metrics class constructor:
+        this.cpuUsage = this.monitoringManager.registerMetric('system.cpu.usage', GaugeSlot);
+        this.diskFree = this.monitoringManager.registerMetric('system.disk.free', GaugeSlot);
+        this.diskIOTime = this.monitoringManager.registerMetric('system.disk.io.time_seconds', RateSlot);
+        this.memoryUsed = this.monitoringManager.registerMetric('system.memory.used', GaugeSlot);
+        this.networkErrorRate = this.monitoringManager.registerParameterized('system.network.{interface}.error.rate', RateSlot);
+        this.requestLatency = this.monitoringManager.registerMetric('system.request.latency_ms', GaugeSlot);
+
+        // Example imports in metrics.ts (following import organization rules):
+        import { MonitoringManager } from '@core/monitoring/manager';
+        import { GaugeSlot, RateSlot, UptimeSlot } from '@core/monitoring/metrics/slots';
+        import { Metric } from '@core/monitoring/metrics/metric';
+        import { ParameterizedMetric } from '@core/monitoring/metrics/parameterized';
+        ```
+
+5. **Metric Disposal:** In the `Metrics` class `dispose()` method, dispose of all registered metrics.
+
+6. **Metric Tests:** Do not test the module's metrics themselves, or create a unit test for the metrics per module, but rather in the unit tests for the module that uses the metrics.

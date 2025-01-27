@@ -1,0 +1,11 @@
+---
+description: Rules for Maintaining Cursor Rules
+globs: *.mdc
+---
+# Rules for Maintaining These Rules
+
+1. **New Slots:** If new `Slot` classes are added to `src/core/monitoring/metrics/slots`, update the **Slot Selection** section in `metrics.md` to include the new slots and their usage guidelines.
+
+2. **New Metric Storages:** If new metric storage types (alternatives to `Metric` or `ParameterizedMetric`) are added, update the **Metric Storage** section in `metrics.md` to include the new types and their usage guidelines.
+
+3. **New Import Paths:** If new import path aliases are added or existing ones are modified, update the **Use Correct Import Paths** section in `src-files.md` to reflect the changes.

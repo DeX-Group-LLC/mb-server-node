@@ -1,0 +1,13 @@
+---
+description: Rules for Adding/Modifying Unit Tests
+globs: *.spec.ts
+---
+# Rules for Adding/Modifying Unit Tests
+
+1. **Comprehensive Coverage:** Ensure new unit tests thoroughly cover the functionality of any new code added.
+
+2. **Test Execution:** Run `npm run test` after adding/modifying unit tests to confirm that all unit tests, including new and modified ones, pass successfully.
+
+3. **JSDocs for Tests:** All unit tests must have JSDoc comments explaining the purpose of the test suite and each test case.
+
+4. **Inline Comments for Tests:** Use inline comments within test cases to clarify assertions and any complex test logic.
