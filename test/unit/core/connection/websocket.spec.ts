@@ -5,7 +5,6 @@ import { ConnectionManager } from '@core/connection';
 import { createWebSocketServer, WebSocketConnection } from '@core/connection/websocket';
 import { ConnectionState } from '@core/connection/types';
 import { InternalError } from '@core/errors';
-import { SetupLogger } from '@utils/logger';
 import logger from '@utils/logger';
 import fs from 'fs';
 import { createServer } from 'https';
