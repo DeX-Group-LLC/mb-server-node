@@ -44,7 +44,7 @@ const responder = ENABLE_RESPONDER ? (process.env.WS_PROTOCOL === 'wss'
     ? tlsConnect({
         host: config.host,
         port: config.ports.tcp,
-        rejectUnauthorized: false,
+        //rejectUnauthorized: false,
         minVersion: 'TLSv1.2'
     })
     : new Socket())
