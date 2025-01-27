@@ -34,12 +34,12 @@ export function createCombinedServer(connectionManager: ConnectionManager): Comb
             key: fs.readFileSync(config.ssl!.key!),
             cert: fs.readFileSync(config.ssl!.cert!),
             // Add proper TLS error handling
-            //handshakeTimeout: 5000, // 5 seconds timeout for handshake
+            handshakeTimeout: 5000, // 5 seconds timeout for handshake
         })
         : createTcpServer();
 
     // Add specific TLS error handling
-    if (config.ssl && config.ssl.key && config.ssl.cert) {
+    if (isTls) {
         server.on('tlsClientError', (err, tlsSocket) => {
             const ip = tlsSocket.remoteAddress || 'unknown';
             if (err.code === 'ECONNRESET') {

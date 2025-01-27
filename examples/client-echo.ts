@@ -43,7 +43,8 @@ const listener = ENABLE_LISTENER ? new WebSocket(`${process.env.WS_PROTOCOL ?? '
 const responder = ENABLE_RESPONDER ? (process.env.WS_PROTOCOL === 'wss'
     ? tlsConnect({
         host: config.host,
-        port: config.port
+        port: config.port,
+        rejectUnauthorized: false
     })
     : new Socket())
     : null;
@@ -83,7 +84,8 @@ if (requester) {
 
 // Responder setup (TCP)
 if (responder) {
-    responder.on('connect', () => {
+    // For TLS connections, we need to wait for the 'secureConnect' event
+    responder.on(process.env.WS_PROTOCOL === 'wss' ? 'secureConnect' : 'connect', () => {
         console.log('Responder connected');
         // Register as Test Responder
         responder.write(frameTcpMessage(createMessage(ActionType.REQUEST, 'system.service.register', {
@@ -155,8 +157,10 @@ if (responder) {
         }
     });
 
-    // Connect to the server
-    responder.connect(config.port, config.host);
+    // Connect to the server (only for non-TLS connections)
+    if (process.env.WS_PROTOCOL !== 'wss') {
+        responder.connect(config.port, config.host);
+    }
 }
 
 // Listener setup
