@@ -35,13 +35,13 @@ export class MessageError extends Error {
      * @param {string} message - The error message.
      * @param {object} [details] - Optional additional details about the error.
      */
-    constructor(code: string, message: string, details?: object) {
+    constructor(code: string, message: string, details?: object, timestamp?: Date) {
         super(message);
         this.code = code;
         this.message = message;
         this.details = details;
         this.name = 'MessageError'; // Set the name of the error
-        this.timestamp = new Date();
+        this.timestamp = timestamp ?? new Date();
     }
 
     /**
@@ -58,6 +58,8 @@ export class MessageError extends Error {
     }
 }
 
+type RemoveFirst<T extends unknown[]> = T extends [infer H, ...infer R] ? R : T;
+
 /**
  * Error class for invalid requests.
  * @extends MessageError
@@ -67,9 +69,10 @@ export class InvalidRequestError extends MessageError {
      * Creates a new InvalidRequestError instance.
      * @param {string} message - The error message.
      * @param {object} [details] - Optional additional details about the error.
+     * @param {Date} [timestamp] - Optional timestamp of when the error occurred.
      */
-    constructor(message: string, details?: object) {
-        super('INVALID_REQUEST', message, details);
+    constructor(...args: RemoveFirst<ConstructorParameters<typeof MessageError>>) {
+        super('INVALID_REQUEST', ...args);
     }
 }
 
@@ -82,9 +85,10 @@ export class MalformedMessageError extends MessageError {
      * Creates a new MalformedMessageError instance.
      * @param {string} message - The error message.
      * @param {object} [details] - Optional additional details about the error.
+     * @param {Date} [timestamp] - Optional timestamp of when the error occurred.
      */
-    constructor(message: string, details?: object) {
-        super('MALFORMED_MESSAGE', message, details);
+    constructor(...args: RemoveFirst<ConstructorParameters<typeof MessageError>>) {
+        super('MALFORMED_MESSAGE', ...args);
     }
 }
 
@@ -97,9 +101,10 @@ export class InvalidRequestIdError extends MessageError {
      * Creates a new InvalidRequestIdError instance.
      * @param {string} message - The error message.
      * @param {object} [details] - Optional additional details about the error.
+     * @param {Date} [timestamp] - Optional timestamp of when the error occurred.
      */
-    constructor(message: string, details?: object) {
-        super('INVALID_REQUEST_ID', message, details);
+    constructor(...args: RemoveFirst<ConstructorParameters<typeof MessageError>>) {
+        super('INVALID_REQUEST_ID', ...args);
     }
 }
 
@@ -112,9 +117,10 @@ export class UnsupportedVersionError extends MessageError {
      * Creates a new UnsupportedVersionError instance.
      * @param {string} message - The error message.
      * @param {object} [details] - Optional additional details about the error.
+     * @param {Date} [timestamp] - Optional timestamp of when the error occurred.
      */
-    constructor(message: string, details?: object) {
-        super('VERSION_NOT_SUPPORTED', message, details);
+    constructor(...args: RemoveFirst<ConstructorParameters<typeof MessageError>>) {
+        super('VERSION_NOT_SUPPORTED', ...args);
     }
 }
 
@@ -127,9 +133,10 @@ export class UnauthorizedError extends MessageError {
      * Creates a new UnauthorizedError instance.
      * @param {string} message - The error message.
      * @param {object} [details] - Optional additional details about the error.
+     * @param {Date} [timestamp] - Optional timestamp of when the error occurred.
      */
-    constructor(message: string, details?: object) {
-        super('UNAUTHORIZED', message, details);
+    constructor(...args: RemoveFirst<ConstructorParameters<typeof MessageError>>) {
+        super('UNAUTHORIZED', ...args);
     }
 }
 
@@ -142,9 +149,10 @@ export class ForbiddenError extends MessageError {
      * Creates a new ForbiddenError instance.
      * @param {string} message - The error message.
      * @param {object} [details] - Optional additional details about the error.
+     * @param {Date} [timestamp] - Optional timestamp of when the error occurred.
      */
-    constructor(message: string, details?: object) {
-        super('FORBIDDEN', message, details);
+    constructor(...args: RemoveFirst<ConstructorParameters<typeof MessageError>>) {
+        super('FORBIDDEN', ...args);
     }
 }
 
@@ -157,9 +165,10 @@ export class TopicNotSupportedError extends MessageError {
      * Creates a new TopicNotSupportedError instance.
      * @param {string} message - The error message.
      * @param {object} [details] - Optional additional details about the error.
+     * @param {Date} [timestamp] - Optional timestamp of when the error occurred.
      */
-    constructor(message: string, details?: object) {
-        super('TOPIC_NOT_SUPPORTED', message, details);
+    constructor(...args: RemoveFirst<ConstructorParameters<typeof MessageError>>) {
+        super('TOPIC_NOT_SUPPORTED', ...args);
     }
 }
 
@@ -172,9 +181,10 @@ export class NoRouteFoundError extends MessageError {
      * Creates a new NoRouteFoundError instance.
      * @param {string} message - The error message.
      * @param {object} [details] - Optional additional details about the error.
+     * @param {Date} [timestamp] - Optional timestamp of when the error occurred.
      */
-    constructor(message: string, details?: object) {
-        super('NO_ROUTE_FOUND', message, details);
+    constructor(...args: RemoveFirst<ConstructorParameters<typeof MessageError>>) {
+        super('NO_ROUTE_FOUND', ...args);
     }
 }
 
@@ -187,9 +197,10 @@ export class ServiceUnavailableError extends MessageError {
      * Creates a new ServiceUnavailableError instance.
      * @param {string} message - The error message.
      * @param {object} [details] - Optional additional details about the error.
+     * @param {Date} [timestamp] - Optional timestamp of when the error occurred.
      */
-    constructor(message: string, details?: object) {
-        super('SERVICE_UNAVAILABLE', message, details);
+    constructor(...args: RemoveFirst<ConstructorParameters<typeof MessageError>>) {
+        super('SERVICE_UNAVAILABLE', ...args);
     }
 }
 
@@ -202,9 +213,10 @@ export class TimeoutError extends MessageError {
      * Creates a new TimeoutError instance.
      * @param {string} message - The error message.
      * @param {object} [details] - Optional additional details about the error.
+     * @param {Date} [timestamp] - Optional timestamp of when the error occurred.
      */
-    constructor(message: string, details?: object) {
-        super('TIMEOUT', message, details);
+    constructor(...args: RemoveFirst<ConstructorParameters<typeof MessageError>>) {
+        super('TIMEOUT', ...args);
     }
 }
 
@@ -217,8 +229,9 @@ export class InternalError extends MessageError {
      * Creates a new InternalError instance.
      * @param {string} message - The error message.
      * @param {object} [details] - Optional additional details about the error.
+     * @param {Date} [timestamp] - Optional timestamp of when the error occurred.
      */
-    constructor(message: string, details?: object) {
-        super('INTERNAL_ERROR', message, details);
+    constructor(...args: RemoveFirst<ConstructorParameters<typeof MessageError>>) {
+        super('INTERNAL_ERROR', ...args);
     }
 }

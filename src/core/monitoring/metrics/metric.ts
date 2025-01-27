@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import { InternalError } from '@core/errors';
-import { BaseSlot, IManageableSlot, GaugeSlot } from './slots';
+import { BaseSlot } from './slots';
 
 // Regex for validating metric names (supports parameterized names)
 const METRIC_NAME_REGEX = /^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*|\.\{[a-z]+:[^:}]+\}){0,4}$/;
@@ -10,7 +10,7 @@ const METRIC_NAME_REGEX = /^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*|\.\{[a-z]+:[^:}]+\})
  * This is the primary metric type used for monitoring values.
  * TSlot is the type of slot that handles value storage and behavior
  */
-export class Metric<TSlot extends BaseSlot = IManageableSlot> extends EventEmitter {
+export class Metric<TSlot extends BaseSlot = BaseSlot> extends EventEmitter {
     /** The slot that handles value storage and behavior */
     private _slot: TSlot;
 

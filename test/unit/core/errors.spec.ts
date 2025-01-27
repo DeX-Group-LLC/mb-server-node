@@ -71,6 +71,18 @@ describe('Error Classes', () => {
         });
 
         /**
+         * Verifies that a MessageError can be created with a custom timestamp.
+         * The error should:
+         * - Use the provided timestamp instead of creating a new one
+         */
+        it('should create a MessageError with custom timestamp', () => {
+            const customTimestamp = new Date('2024-01-01T00:00:00Z');
+            const error = new MessageError('TEST_CODE', 'Test message', undefined, customTimestamp);
+
+            expect(error.timestamp).toBe(customTimestamp);
+        });
+
+        /**
          * Verifies that a MessageError can be converted to JSON.
          * The serialized error should:
          * - Include the error code

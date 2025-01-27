@@ -9,6 +9,11 @@ export interface IReadOnlySlot extends IBaseSlot {
      * Gets the current value.
      */
     get value(): number;
+
+    /**
+     * Gets the last modified time.
+     */
+    get lastModified(): Date;
 }
 
 /**
