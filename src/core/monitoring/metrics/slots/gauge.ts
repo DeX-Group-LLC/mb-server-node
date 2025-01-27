@@ -13,6 +13,7 @@ export class GaugeSlot extends BaseSlot implements ISlotAddable, ISlotSettable {
      */
     set(value: number): void {
         this._value = value;
+        this._lastModified = new Date();
     }
 
     /**
@@ -20,6 +21,7 @@ export class GaugeSlot extends BaseSlot implements ISlotAddable, ISlotSettable {
      */
     add(value: number): void {
         this._value += value;
+        this._lastModified = new Date();
     }
 
     /**
@@ -34,6 +36,7 @@ export class GaugeSlot extends BaseSlot implements ISlotAddable, ISlotSettable {
      */
     reset(): void {
         this._value = 0;
+        this._lastModified = new Date();
     }
 
     /**

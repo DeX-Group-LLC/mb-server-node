@@ -50,6 +50,20 @@ describe('UptimeSlot', () => {
     });
 
     /**
+     * Tests that lastModified always returns the current time.
+     * The uptime slot updates its lastModified time on every value access.
+     */
+    it('should return current time for lastModified', () => {
+        const initialTime = slot.lastModified.getTime();
+        expect(initialTime).toBe(now);
+
+        // Advance time and verify lastModified reflects the new time
+        now += 5000;
+        const newTime = slot.lastModified.getTime();
+        expect(newTime).toBe(now);
+    });
+
+    /**
      * Verifies automatic time tracking.
      * As time advances, the uptime value should increase accordingly.
      */

@@ -1,18 +1,48 @@
 import { randomUUID } from 'crypto';
+import { config } from '@config';
 import { Connection, ConnectionState } from '@core/connection/types';
 import { InternalError, MalformedMessageError, MessageError } from '@core/errors';
 import { MonitoringManager } from '@core/monitoring';
 import { ServiceRegistry } from '@core/registry';
 import { MessageRouter } from '@core/router';
-import { MessageUtils, Header, Payload } from '@/core/utils';
+import { SubscriptionManager } from '@core/subscription';
 import { ActionType } from '@core/types';
-import logger from '@utils/logger';
+import { BrokerHeader, ClientHeader, Exact, Message, MessageUtils, Payload } from '@core/utils';
+import { SetupLogger } from '@utils/logger';
 import { ConnectionMetrics } from './metrics';
+
+const logger = SetupLogger('ConnectionManager');
+
+/**
+ * The header for a message audit when the broker sends a message to a client.
+ */
+interface BrokerMessageAudit {
+    timestamp: string; // The ISO-8601 timestamp of when the message was sent
+    to: string; // The service id of the client
+    message: {
+        header: BrokerHeader;
+        payload: string;
+    }; // The original broker message
+    maskedId?: string; // The response id that the broker overwrote
+}
+
+/**
+ * The header for a message audit when the broker receives a message from a client.
+ */
+interface ClientMessageAudit {
+    timestamp: string; // The ISO-8601 timestamp of when the message was received
+    timeout: number; // The timeout of the request
+    from: string; // The service id of the client
+    message: {
+        header: ClientHeader;
+        payload: string;
+    }; // The original client message
+}
 
 /**
  * The header for an error message when the message header are malformed.
  */
-const ERROR_HEADER: Header = {
+const ERROR_HEADER: BrokerHeader = {
     action: ActionType.RESPONSE,
     topic: 'error',
     version: '1.0.0',
@@ -25,7 +55,7 @@ export class ConnectionManager {
     private connections: Map<string, Connection>;
     private metrics: ConnectionMetrics;
 
-    constructor(private messageRouter: MessageRouter, private serviceRegistry: ServiceRegistry, private monitorManager: MonitoringManager) {
+    constructor(private messageRouter: MessageRouter, private serviceRegistry: ServiceRegistry, monitorManager: MonitoringManager, private subscriptionManager: SubscriptionManager) {
         this.connections = new Map<string, Connection>();
         this.metrics = new ConnectionMetrics(monitorManager);
     }
@@ -76,13 +106,12 @@ export class ConnectionManager {
     }
 
     /**
-     * Sends a message to a specific service over its connection.
+     * Resolves a connection for a given service ID.
      *
-     * @param serviceId The ID of the service to send the message to.
-     * @param header The message header.
-     * @param payload The message payload.
+     * @param serviceId The ID of the service.
+     * @returns The connection object if found, undefined otherwise.
      */
-    sendMessage(serviceId: string, header: Header, payload: Payload = {}): void {
+    private _resolveConnection(serviceId: string): Connection | undefined {
         const connection = this.connections.get(serviceId);
 
         if (!connection) {
@@ -97,8 +126,39 @@ export class ConnectionManager {
             throw new InternalError('Desired service connection is not open');
         }
 
-        connection.send(MessageUtils.serialize(header, payload));
-        logger.info(`Sent message to service ${serviceId}`);
+        return connection;
+    }
+
+    /**
+     * Sends a message to a specific service over its connection.
+     *
+     * @param serviceId The ID of the service to send the message to.
+     * @param header The message header.
+     * @param payload The message payload.
+     */
+    sendMessage<T>(serviceId: string, header: Exact<T, BrokerHeader>, payload: Payload = {}, maskedId: string | undefined): void {
+        const connection = this._resolveConnection(serviceId);
+        if (!connection) return;
+
+        // Send the message to the service
+        connection.send(MessageUtils.serialize(header as BrokerHeader, payload));
+        //logger.debug(`Sent message ${header.action}:${header.topic}:${header.version}:${header.requestid ? ':' +header.requestid : ''} to ${serviceId}`, { header, payload, serviceId });
+
+        // Notify all subscribers of `system.message`:
+        const subscribers = this.subscriptionManager.getSubscribers('system.message');
+        if (subscribers.length) {
+            const subHeader = { action: ActionType.PUBLISH, topic: 'system.message', version: '1.0.0' } as BrokerHeader;
+            const message = { header, payload } as any as BrokerMessageAudit['message'];
+            // If the message has a parentRequestId, and it matches the maskedId, then remove the parentRequestId
+            //if (maskedId && maskedId === message.header.parentRequestId) delete message.header.parentRequestId; // TODO: We should probably ensure that we don't call this function with a parentRequestId that matches the maskedId
+            const msg = MessageUtils.serialize(subHeader, { timestamp: new Date().toISOString(), to: serviceId, message, maskedId } as BrokerMessageAudit);
+            // Forward the message to all subscribers
+            for (const subscriber of subscribers) {
+                const connection = this._resolveConnection(subscriber);
+                if (!connection) continue;
+                connection.send(msg);
+            }
+        }
     }
 
     /**
@@ -107,46 +167,41 @@ export class ConnectionManager {
      * @param connection The connection that received the message.
      * @param message The message to handle.
      */
-    private handleMessage(connection: Connection, message: string): void {
-        let header: Header | null = null;
-        let payload: Payload | null = null;
+    private handleMessage(connection: Connection, buffer: Buffer): void {
+        let parser: MessageUtils.Parser | null = null;
 
-        logger.info(`Received message from service ${connection.serviceId} (IP ${connection.ip})`);
+        //logger.debug(`Received message from service ${connection.serviceId} (IP ${connection.ip})`);
 
         try {
-            // Create the parser and parse the message
-            const parser = new MessageUtils.Parser(message.toString());
-            header = parser.parseHeader();
-            payload = parser.parsePayload(header.action);
+            // Parse the message
+            parser = new MessageUtils.Parser(buffer);
+
+            // Notify all subscribers of `system.message`:
+            const subscribers = this.subscriptionManager.getSubscribers('system.message');
+            if (subscribers.length) {
+                const subHeader = { action: ActionType.PUBLISH, topic: 'system.message', version: '1.0.0' } as BrokerHeader;
+                const message = { header: parser.header, payload: {} } as any as ClientMessageAudit['message'];
+                const msg = MessageUtils.serialize(subHeader, { timestamp: new Date().toISOString(), timeout: parser.header.timeout ?? config.request.response.timeout.default, from: connection.serviceId, message } as any as ClientMessageAudit).replace('"payload":{}', `"payload":${parser!.rawPayload.toString('utf-8')}`);
+                // Forward the message to all subscribers
+                for (const subscriber of subscribers) {
+                    this._resolveConnection(subscriber)!.send(msg);
+                }
+            }
 
             // Route the message to the message router
-            this.messageRouter.routeMessage(connection.serviceId, { header, payload });
+            this.messageRouter.routeMessage(connection.serviceId, parser);
         } catch (error) {
             // Set the action to Response
-            header = header !== null ? { ...header, action: ActionType.RESPONSE } : ERROR_HEADER;
+            const header = parser?.header ? MessageUtils.toBrokerHeader(parser.header, ActionType.RESPONSE, parser.header.requestId) : ERROR_HEADER;
             // If the error is a MessageError, send an error message to the client
             if (error instanceof MessageError) {
-                logger.error(`[${error.code}] ${error.message}`, error.details);
-                connection.send(MessageUtils.serialize(header, { error: error.toJSON() }));
-                return;
+                logger.error(`[${error.code}] ${error.message}`, { serviceId: connection.serviceId, error });
+                this.sendMessage(connection.serviceId, header, { error: error.toJSON() }, undefined);
             } else if (error instanceof Error) {
-                if (header == ERROR_HEADER) {
-                    // If the header is null, the message is malformed
-                    logger.error('Unexpected error while parsing message header:', error);
-                    connection.send(MessageUtils.serialize(header, { error: new MalformedMessageError('Unexpected error while parsing message header').toJSON() }));
-                    return;
-                } else if (payload == null) {
-                    // If the payload is null, the message is malformed
-                    logger.error('Unexpected error while parsing message payload:', error);
-                    connection.send(MessageUtils.serialize(header, { error: new MalformedMessageError('Unexpected error while parsing message payload').toJSON() }));
-                    return;
-                } else {
-                    // If the error is not a MessageError and the header and payload are not null, then the error is during routing
-                    // Send an internal error message to the client
-                    logger.error('An unexpected error while routing the message:', error);
-                    connection.send(MessageUtils.serialize(header, { error: new InternalError('An unexpected error while routing the message').toJSON() }));
-                    return;
-                }
+                // If the error is not a MessageError and the header and payload are not null, then the error is during routing
+                // Send an internal error message to the client
+                logger.error('An unexpected error while routing the message:', { serviceId: connection.serviceId, error });
+                this.sendMessage(connection.serviceId, header, { error: new InternalError('An unexpected error while routing the message').toJSON() }, undefined);
             }
         }
     }
@@ -181,13 +236,15 @@ export class ConnectionManager {
     }
 
     /**
-     * Closes all active connections.
+     * Disposes of all connections and metrics.
      */
-    async closeAllConnections(): Promise<void> {
+    async dispose(): Promise<void> {
         for (const connection of this.connections.values()) {
             connection.close();
         }
         this.connections.clear();
         logger.info('Closed all connections');
+        this.metrics.dispose();
+        logger.info('Disposed of all metrics');
     }
 }

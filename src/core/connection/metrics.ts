@@ -1,20 +1,37 @@
-import { MonitoringManager } from '@core/monitoring';
+import { MetricsContainer, MonitoringManager } from '@core/monitoring';
 import { Metric } from '@core/monitoring';
 import { GaugeSlot, RateSlot } from '@core/monitoring/metrics/slots';
 
 /**
  * Manages metrics for the connection module.
  */
-export class ConnectionMetrics {
-    private activeConnections: Metric;
-    private connectionConnectedRate: Metric;
-    private connectionConnectedTotal: Metric;
-    private connectionDisconnectedRate: Metric;
-    private connectionDisconnectedTotal: Metric;
-    private connectionFailedRate: Metric;
-    private connectionFailedTotal: Metric;
-    private connectionRejectedRate: Metric;
-    private connectionRejectedTotal: Metric;
+export class ConnectionMetrics implements MetricsContainer {
+    /** Total number of active connections */
+    public readonly activeConnections: Metric<GaugeSlot>;
+
+    /** Rate of successful connections */
+    public readonly connectionConnectedRate: Metric<RateSlot>;
+
+    /** Total number of successful connections */
+    public readonly connectionConnectedTotal: Metric<GaugeSlot>;
+
+    /** Rate of disconnections */
+    public readonly connectionDisconnectedRate: Metric<RateSlot>;
+
+    /** Total number of disconnections */
+    public readonly connectionDisconnectedTotal: Metric<GaugeSlot>;
+
+    /** Rate of failed connections */
+    public readonly connectionFailedRate: Metric<RateSlot>;
+
+    /** Total number of failed connections */
+    public readonly connectionFailedTotal: Metric<GaugeSlot>;
+
+    /** Rate of rejected connections */
+    public readonly connectionRejectedRate: Metric<RateSlot>;
+
+    /** Total number of rejected connections */
+    public readonly connectionRejectedTotal: Metric<GaugeSlot>;
 
     constructor(private monitorManager: MonitoringManager) {
         // Initialize all metrics
@@ -58,8 +75,23 @@ export class ConnectionMetrics {
     /**
      * Updates metrics when a connection attempt is rejected
      */
-    onConnectionRejected(): void {
+    /*onConnectionRejected(): void {
         this.connectionRejectedRate.slot.add(1);
         this.connectionRejectedTotal.slot.add(1);
+    }*/
+
+    /**
+     * Disposes of all metrics
+     */
+    dispose(): void {
+        this.activeConnections.dispose();
+        this.connectionConnectedRate.dispose();
+        this.connectionConnectedTotal.dispose();
+        this.connectionDisconnectedRate.dispose();
+        this.connectionDisconnectedTotal.dispose();
+        this.connectionFailedRate.dispose();
+        this.connectionFailedTotal.dispose();
+        this.connectionRejectedRate.dispose();
+        this.connectionRejectedTotal.dispose();
     }
 }

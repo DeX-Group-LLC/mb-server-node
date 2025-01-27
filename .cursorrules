@@ -1,0 +1,114 @@
+# General Rules for Modifying `src` Files
+
+1. **Document Thoroughly:**
+   - Use JSDocs for functions, classes, and methods. Follow JSDoc style guidelines enforced by ESLint (e.g., `jsdoc/check-alignment`, `jsdoc/check-indentation`).
+   - Add inline comments to explain complex logic.
+2. **Update Unit Tests:**
+    *   Run `npm run test` before updating unit tests to check for any existing unit tests that may need to be updated. This will also provide code coverage information to help you determine if you need to add more tests.
+    *   Create new unit tests for any new code added.
+    *   Modify existing unit tests to cover changes made to existing code.
+3. **Update README:** If changes affect repository-level functionality, update the `README.md` file accordingly.
+4. **Use Correct Import Paths:** Always use the defined import paths when importing modules within the project. Do not use relative paths when an alias is available. The available aliases are:
+    *   `@/` - `src/`
+    *   `@core/` - `src/core/`
+    *   `@config` - `src/config`
+    *   `@config/` - `src/config/`
+    *   `@package.json` - `package.json` (root-level)
+    *   `@server` - `src/server`
+    *   `@test/` - `test/`
+    *   `@utils/` - `src/utils/`
+    *   `@version` - `src/version`
+    ESLint's `no-restricted-imports` rule will enforce this.
+5. **Organize Imports:**
+    *   **Minimize Imports:** Group imports from the same source into a single import statement whenever possible. For example:
+
+        ```javascript
+        // Instead of:
+        import { MyClass } from '@core/my-module';
+        import { myFunction } from '@core/my-module';
+
+        // Do this:
+        import { MyClass, myFunction } from '@core/my-module';
+        ```
+
+    *   **Import Sections:** Organize imports into the following sections, in this order:
+        1. **Standard Library and `package.json` Dependencies:** Modules from the Node.js standard library (e.g., `fs`, `path`) and dependencies listed in your `package.json`.
+        2. **Custom Paths:** Imports using your defined import aliases (e.g., `@core`, `@utils`).
+        3. **Local Paths:** Relative imports from within the same module or a closely related module (e.g., `./my-local-module`).
+
+    *   **Alphabetical Order within Sections:** Within each of the above sections, sort imports alphabetically by the source path.
+
+    *   **Example:**
+
+        ```javascript
+        // Standard Library and package.json Dependencies
+        import fs from 'fs';
+        import { get } from 'lodash';
+        import path from 'path';
+
+        // Custom Paths
+        import { MyComponent } from '@/components/MyComponent';
+        import { DATA_DIR } from '@config';
+        import { MyService } from '@core/services/MyService';
+        import { Logger } from '@utils/Logger';
+
+        // Local Paths
+        import { myHelperFunction } from './helpers';
+        import { siblingFunction } from './sibling-module';
+        ```
+
+# Specific Rules for Adding/Modifying Metrics in a Module
+
+1. **Metric Registration:** Register every new metric using the `monitoringManager`. Use `this.monitoringManager.registerMetric` for single metrics and `this.monitoringManager.registerParameterized` for parameterized metrics within the module's `metrics.ts` file.
+2. **Metric Storage:**
+    *   Use `Metric` to store a single metric.
+    *   Use `ParameterizedMetric` to store a collection of metrics that share a common name but are differentiated by a parameter (e.g., `serviceId`). Each unique parameter value represents a distinct metric within the collection.
+3. **Slot Selection:** Choose the correct `Slot` class for each metric from the available options in `src/core/monitoring/metrics/slots`:
+    *   `GaugeSlot`: Use when you need to set the metric's value directly. Suitable for representing totals, current values, or any metric that can be directly assigned a value.
+    *   `RateSlot`: Use when you want to track a rate (per second). Add delta values to the `RateSlot`, and it will automatically calculate and manage the rate.
+    *   `UptimeSlot`: Use when you want to track the duration (in seconds) since a specific date or event.
+4. **Alphabetical Ordering:**
+    *   **Metric Class Properties:** List metrics in the `Metrics` class in alphabetical order by their names. For example:
+
+        ```
+        public readonly cpuUsage: Metric<GaugeSlot>;
+        public readonly diskFree: Metric<GaugeSlot>;
+        public readonly diskIOTime: Metric<RateSlot>;
+        public readonly memoryUsed: Metric<GaugeSlot>;
+        public readonly networkErrorRate: ParameterizedMetric<RateSlot>;
+        public readonly requestLatency: Metric<GaugeSlot>;
+        ```
+
+    *   **Metrics Class Constructor:** Register metrics in the `Metrics` class constructor in alphabetical order by their names. For example:
+
+        ```
+        // In the Metrics class constructor:
+        this.cpuUsage = this.monitoringManager.registerMetric('system.cpu.usage', GaugeSlot);
+        this.diskFree = this.monitoringManager.registerMetric('system.disk.free', GaugeSlot);
+        this.diskIOTime = this.monitoringManager.registerMetric('system.disk.io.time_seconds', RateSlot);
+        this.memoryUsed = this.monitoringManager.registerMetric('system.memory.used', GaugeSlot);
+        this.networkErrorRate = this.monitoringManager.registerParameterized('system.network.{interface}.error.rate', RateSlot);
+        this.requestLatency = this.monitoringManager.registerMetric('system.request.latency_ms', GaugeSlot);
+
+        // Example imports in metrics.ts (following import organization rules):
+        import { MonitoringManager } from '@core/monitoring/manager';
+        import { GaugeSlot, RateSlot, UptimeSlot } from '@core/monitoring/metrics/slots';
+        import { Metric } from '@core/monitoring/metrics/metric';
+        import { ParameterizedMetric } from '@core/monitoring/metrics/parameterized';
+        ```
+
+5. **Metric Disposal:** In the `Metrics` class `dispose()` method, dispose of all registered metrics.
+6. **Metric Tests:** Do not test the module's metrics themselves, or create a unit test for the metrics per module, but rather in the unit tests for the module that uses the metrics.
+
+# Specific Rules for Adding/Modifying Unit Tests for a Module
+
+1. **Comprehensive Coverage:** Ensure new unit tests thoroughly cover the functionality of any new code added.
+2. **Test Execution:** Run `npm run test` after adding/modifying unit tests to confirm that all unit tests, including new and modified ones, pass successfully.
+3. **JSDocs for Tests:** All unit tests must have JSDoc comments explaining the purpose of the test suite and each test case.
+4. **Inline Comments for Tests:** Use inline comments within test cases to clarify assertions and any complex test logic.
+
+# Updating the .cursorrules File
+
+1. **New Slots:** If new `Slot` classes are added to `src/core/monitoring/metrics/slots`, update the **Slot Selection** section of these rules to include the new slots and their usage guidelines.
+2. **New Metric Storages:** If new metric storage types (alternatives to `Metric` or `ParameterizedMetric`) are added, update the **Metric Storage** section to include the new types and their usage guidelines.
+3. **New Import Paths:** If new import path aliases are added or existing ones are modified, update the **Use Correct Import Paths** section to reflect the changes.

@@ -6,7 +6,10 @@ import { MonitoringManager } from '@core/monitoring';
 import { ServiceRegistry } from '@core/registry';
 import { MessageRouter } from '@core/router';
 import { SubscriptionManager } from '@core/subscription';
-import logger from '@utils/logger';
+import { SetupLogger } from '@utils/logger';
+import { SystemManager } from './system/manager';
+
+const logger = SetupLogger('MessageBroker');
 
 export class MessageBroker {
     private wss: WebSocketServer;
@@ -15,6 +18,7 @@ export class MessageBroker {
     private monitorManager: MonitoringManager;
     private subscriptionManager: SubscriptionManager;
     private serviceRegistry: ServiceRegistry;
+    private systemManager: SystemManager;
     private createdAt: Date;
 
     /**
@@ -22,42 +26,43 @@ export class MessageBroker {
      */
     constructor() {
         this.monitorManager = new MonitoringManager();
+        this.systemManager = new SystemManager(this.monitorManager);
         this.subscriptionManager = new SubscriptionManager();
-        this.messageRouter = new MessageRouter(this.subscriptionManager);
-        this.serviceRegistry = new ServiceRegistry(this.subscriptionManager);
-        this.connectionManager = new ConnectionManager(this.messageRouter, this.serviceRegistry, this.monitorManager);
+        this.messageRouter = new MessageRouter(this.subscriptionManager, this.monitorManager);
+        this.serviceRegistry = new ServiceRegistry(this.subscriptionManager, this.monitorManager);
+        this.connectionManager = new ConnectionManager(this.messageRouter, this.serviceRegistry, this.monitorManager, this.subscriptionManager);
         this.serviceRegistry.assignConnectionManager(this.connectionManager);
         this.messageRouter.assignConnectionManager(this.connectionManager);
         this.messageRouter.assignServiceRegistry(this.serviceRegistry);
         this.wss = createWebSocketServer(this.connectionManager);
         this.createdAt = new Date();
-        logger.info(`Message Broker created at ${this.createdAt.toISOString()}`);
-        logger.info(`Message Broker listening on ${config.host}:${config.port} (WebSocket)`);
+        logger.info(`Created at ${this.createdAt.toISOString()}`);
+        logger.info(`Listening on ${config.host}:${config.port} (WebSocket)`);
     }
 
     /**
      * Shuts down the Message Broker.
      */
     async shutdown(): Promise<void> {
-        logger.info('Shutting down Message Broker...');
+        logger.info('Shutting down...');
 
         // Clear all requests
-        await this.messageRouter.clearRequests();
+        await this.messageRouter.dispose();
 
         // Clear all subscriptions
-        await this.subscriptionManager.clearAllSubscriptions();
+        await this.subscriptionManager.dispose();
 
         // Clear all services
-        await this.serviceRegistry.clearAllServices();
+        await this.serviceRegistry.dispose();
 
         // Close all connections
-        await this.connectionManager.closeAllConnections();
+        await this.connectionManager.dispose();
 
         // Stop the WebSocket server
         await new Promise<void>((resolve, reject) => {
             this.wss.close((err) => {
                 if (err) {
-                    logger.error('Error closing WebSocket server:', err);
+                    logger.error('Error closing WebSocket server', { error: err });
                     reject(err);
                 } else {
                     logger.info('WebSocket server closed');
@@ -66,6 +71,12 @@ export class MessageBroker {
             });
         });
 
-        logger.info('Message Broker shutdown complete.');
+        // Dispose of system manager
+        this.systemManager.dispose();
+
+        // Dispose of monitoring manager
+        this.monitorManager.dispose();
+
+        logger.info('Shutdown complete.');
     }
 }

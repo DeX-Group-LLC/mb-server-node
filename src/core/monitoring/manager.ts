@@ -1,10 +1,16 @@
 import { InternalError } from '@core/errors';
-import { ParameterizedMetric } from './metrics/parameterized';
-import { BaseSlot, IReadOnlySlot, IManageableSlot, GaugeSlot } from './metrics/slots';
-import { Metric } from './metrics/metric';
+import { SetupLogger } from '@utils/logger';
+import { Metric, ParameterizedMetric } from './metrics';
+import { BaseSlot, IReadOnlySlot } from './metrics/slots';
 
-// Regex for validating metric names (supports parameterized names)
-const METRIC_NAME_REGEX = /^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*|\.\{[a-z]+:[^:}]+\}){0,4}$/;
+const logger = SetupLogger('MonitoringManager');
+
+export interface MetricInfo {
+    name: string;
+    type: string;
+    timestamp: string;
+    value: number;
+}
 
 /**
  * Manages all metrics in the application, providing registration and lookup functionality.
@@ -88,7 +94,7 @@ export class MonitoringManager {
         // Check if this is a parameterized metric
         if (ParameterizedMetric.isParameterized(canonicalName)) {
             const extracted = ParameterizedMetric.extract(canonicalName);
-            return this.parameterizedMetrics.get(extracted.template)?.getMetric(canonicalName)?.slot;
+            return this.parameterizedMetrics.get(extracted.template)?.getMetric(extracted.params)?.slot;
         }
 
         // Otherwise, return the metric
@@ -112,5 +118,63 @@ export class MonitoringManager {
         // Clear the maps
         this.metrics.clear();
         this.parameterizedMetrics.clear();
+
+        logger.info('Cleared all metrics');
+    }
+
+    /**
+     * Serializes all metrics to a JSON object.
+     * @returns A JSON object containing all metrics.
+     */
+    serializeMetrics(showAll: boolean, paramFilter?: Record<string, string>): Record<string, number> | Record<string, MetricInfo> {
+        if (showAll) {
+            const metrics: Record<string, MetricInfo> = {};
+            // Skip regular metrics if we have a param filter
+            if (!paramFilter) {
+                // Serialize all metrics:
+                for (const metric of this.metrics.values()) {
+                    metrics[metric.name] = {
+                        name: metric.name,
+                        type: metric.slot.constructor.name.toLowerCase().replace('slot', ''),
+                        timestamp: metric.slot.lastModified.toISOString(),
+                        value: metric.slot.value
+                    };
+                }
+            }
+            // Serialize all parameterized metrics:
+            for (const metric of this.parameterizedMetrics.values()) {
+                // Get the iterator for the metrics
+                const iter = paramFilter ? metric.filteredMetrics(paramFilter) : metric.allMetrics;
+                // Serialize the metrics
+                for (const metricInstance of iter) {
+                    metrics[metricInstance.name] = {
+                        name: metricInstance.name,
+                        type: metricInstance.slot.constructor.name.toLowerCase().replace('slot', ''),
+                        timestamp: metricInstance.slot.lastModified.toISOString(),
+                        value: metricInstance.slot.value
+                    };
+                }
+            }
+            return metrics;
+        } else {
+            const metrics: Record<string, number> = {};
+            // Skip regular metrics if we have a param filter
+            if (!paramFilter) {
+                // Serialize all metrics:
+                for (const metric of this.metrics.values()) {
+                    metrics[metric.name] = metric.slot.value;
+                }
+            }
+            // Serialize all parameterized metrics:
+            for (const metric of this.parameterizedMetrics.values()) {
+                // Get the iterator for the metrics
+                const iter = paramFilter ? metric.filteredMetrics(paramFilter) : metric.allMetrics;
+                // Serialize the metrics
+                for (const metricInstance of iter) {
+                    metrics[metricInstance.name] = metricInstance.slot.value;
+                }
+            }
+            return metrics;
+        }
     }
 }

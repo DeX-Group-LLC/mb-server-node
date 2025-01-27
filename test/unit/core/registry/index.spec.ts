@@ -1,1124 +1,1277 @@
+import { LogEntry } from 'winston';
+import { config } from '@config';
 import { ConnectionManager } from '@core/connection';
-import { InvalidRequestError } from '@core/errors';
-import { ServiceRegistry } from '@core/registry';
+import { InvalidRequestError, TopicNotSupportedError } from '@core/errors';
+import { MonitoringManager } from '@core/monitoring';
 import { SubscriptionManager } from '@core/subscription';
 import { ActionType } from '@core/types';
-import { Message, TopicUtils } from '@core/utils';
+import { MessageUtils } from '@core/utils';
+import { ServiceRegistry } from '@core/registry';
+import { RegistryMetrics } from '@core/registry/metrics';
+import { MessageRouter } from '@core/router';
+import { GaugeSlot, RateSlot, UptimeSlot } from '@core/monitoring/metrics/slots';
+import { SetupLogger } from '@utils/logger';
+import { randomUUID } from 'crypto';
 
-jest.mock('@config', () => ({
-    config: {
-        connection: {
-            heartbeatRetryTimeout: 30000,
-            heartbeatDeregisterTimeout: 60000,
-        },
-        logging: {
-            level: 'info',
-            format: 'json'
-        }
-    },
+jest.mock('@core/connection');
+jest.mock('@core/subscription');
+jest.mock('@core/router');
+jest.mock('@utils/logger', () => ({
+    SetupLogger: jest.fn().mockReturnValue({
+        stream: jest.fn().mockReturnValue({
+            on: jest.fn()
+        }),
+        on: jest.fn(),
+        off: jest.fn(),
+        info: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        debug: jest.fn()
+    })
 }));
-jest.mock('@core/utils');
-jest.mock('@utils/logger');
 
 describe('ServiceRegistry', () => {
-    let serviceRegistry: ServiceRegistry;
-    let mockConnectionManager: jest.Mocked<ConnectionManager>;
-    let mockSubscriptionManager: jest.Mocked<SubscriptionManager>;
-    const serviceId = 'test-service';
-    const requestId = 'req-1';
-    const mockDate = new Date('2023-01-01T00:00:00.000Z');
+    let registry: ServiceRegistry;
+    let subscriptionManager: jest.Mocked<SubscriptionManager>;
+    let connectionManager: jest.Mocked<ConnectionManager>;
+    let monitoringManager: MonitoringManager;
+    let messageRouter: jest.Mocked<MessageRouter>;
 
-    beforeAll(() => {
-        jest.useFakeTimers();
-    });
+    const createMockMessage = (header: any, payload?: any): MessageUtils.Parser => {
+        const message = MessageUtils.serialize({
+            ...header,
+            requestId: header.requestId || randomUUID()
+        }, payload || {});
+        return new MessageUtils.Parser(Buffer.from(message));
+    };
 
     beforeEach(() => {
-        mockConnectionManager = {
-            sendMessage: jest.fn(),
-            removeConnection: jest.fn(),
-        } as unknown as jest.Mocked<ConnectionManager>;
+        // Reset all mocks
+        jest.clearAllMocks();
 
-        mockSubscriptionManager = {
-            subscribe: jest.fn(),
-            unsubscribe: jest.fn(),
-            getAllSubscribedTopics: jest.fn(),
-            getSubscribers: jest.fn(),
-            getTopSubscribers: jest.fn(),
-        } as unknown as jest.Mocked<SubscriptionManager>;
+        // Create instances with minimal required constructor args
+        subscriptionManager = new SubscriptionManager() as jest.Mocked<SubscriptionManager>;
+        monitoringManager = new MonitoringManager();
+        messageRouter = new MessageRouter(subscriptionManager, monitoringManager) as jest.Mocked<MessageRouter>;
 
-        // Mock topic functions
-        (TopicUtils.isValid as jest.Mock).mockReturnValue(true);
+        // Create registry instance first since ConnectionManager needs it
+        registry = new ServiceRegistry(subscriptionManager, monitoringManager);
 
-        serviceRegistry = new ServiceRegistry(mockSubscriptionManager);
-        serviceRegistry.assignConnectionManager(mockConnectionManager);
+        // Now create ConnectionManager with all required dependencies
+        connectionManager = new ConnectionManager(messageRouter, registry, monitoringManager, subscriptionManager) as jest.Mocked<ConnectionManager>;
 
-        jest.spyOn(global, 'Date').mockImplementation(() => mockDate as any);
+        // Mock subscriptionManager methods
+        subscriptionManager.subscribe = jest.fn().mockReturnValue(true);
+        subscriptionManager.unsubscribe = jest.fn().mockReturnValue(true);
+
+        // Assign connection manager to registry
+        registry.assignConnectionManager(connectionManager);
     });
 
     afterEach(() => {
-        jest.clearAllMocks();
-        jest.clearAllTimers();
-    });
-
-    afterAll(() => {
+        // Dispose registry and metrics
+        registry.dispose();
+        monitoringManager.dispose();
         jest.useRealTimers();
     });
 
-    describe('handleSystemMessage', () => {
-        it('should handle heartbeat request', () => {
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.heartbeat',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {},
-            };
+    describe('Service Registration', () => {
+        it('should register a new service with default values', () => {
+            const serviceId = 'test-service';
+            registry.registerService(serviceId);
 
-            serviceRegistry.registerService(serviceId);
-            serviceRegistry.handleSystemMessage(serviceId, message);
+            // Verify service was registered
+            const service = registry['services'].get(serviceId);
+            expect(service).toBeDefined();
+            expect(service?.name).toBe('');
+            expect(service?.description).toBe('');
+        });
 
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
+        it('should register a service with custom name and description', () => {
+            const serviceId = 'test-service';
+            const name = 'Test Service';
+            const description = 'A test service';
+            registry.registerService(serviceId, name, description);
+
+            // Verify service was registered
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.service.list',
+                version: '1.0.0'
+            }));
+
+            expect(connectionManager.sendMessage).toHaveBeenCalledWith(
                 serviceId,
-                {
+                expect.objectContaining({
                     action: ActionType.RESPONSE,
-                    topic: 'system.heartbeat',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                { status: 'success' }
+                    topic: 'system.service.list'
+                }),
+                expect.objectContaining({
+                    services: expect.arrayContaining([
+                expect.objectContaining({
+                            id: serviceId,
+                            name,
+                            description
+                        })
+                    ])
+                }),
+                undefined
             );
         });
 
-        it('should handle heartbeat request for unregistered service', () => {
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.heartbeat',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {},
-            };
+        it('should throw error if service name is too long', () => {
+            const serviceId = 'test-service';
+            const longName = 'a'.repeat(37);
 
-            serviceRegistry.handleSystemMessage(serviceId, message);
+            expect(() => registry.registerService(serviceId, longName))
+                .toThrow(InvalidRequestError);
+        });
 
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
+        it('should throw error if service description is too long', () => {
+            const serviceId = 'test-service';
+            const longDescription = 'a'.repeat(1025);
+
+            expect(() => registry.registerService(serviceId, 'name', longDescription))
+                .toThrow(InvalidRequestError);
+        });
+
+        it('should update existing service on re-registration', () => {
+            const serviceId = 'test-service';
+            registry.registerService(serviceId, 'name1', 'desc1');
+            registry.registerService(serviceId, 'name2', 'desc2');
+
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.service.list',
+                version: '1.0.0'
+            }));
+
+            expect(connectionManager.sendMessage).toHaveBeenCalledWith(
                 serviceId,
-                {
-                    action: ActionType.RESPONSE,
-                    topic: 'system.heartbeat',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                {
-                    error: {
-                        code: 'SERVICE_UNAVAILABLE',
-                        message: `Service ${serviceId} not found`,
-                        timestamp: mockDate.toISOString(),
-                        details: undefined,
-                    },
-                }
+                expect.any(Object),
+                expect.objectContaining({
+                    services: expect.arrayContaining([
+                expect.objectContaining({
+                        id: serviceId,
+                            name: 'name2',
+                            description: 'desc2'
+                        })
+                    ])
+                }),
+                undefined
+            );
+        });
+    });
+
+    describe('Service Unregistration', () => {
+        it('should unregister an existing service', () => {
+            const serviceId = 'test-service';
+            registry.registerService(serviceId);
+            registry.unregisterService(serviceId);
+
+            // Verify cleanup actions
+            expect(subscriptionManager.unsubscribe).toHaveBeenCalledWith(serviceId);
+            expect(connectionManager.removeConnection).toHaveBeenCalledWith(serviceId);
+        });
+
+        it('should handle unregistering non-existent service', () => {
+            expect(() => registry.unregisterService('non-existent'))
+                .not.toThrow();
+        });
+    });
+
+    describe('System Message Handling', () => {
+        it('should handle messages with and without requestId', () => {
+            const serviceId = randomUUID();
+            const requestId = randomUUID();
+            registry.registerService(serviceId);
+
+            // Test with requestId
+            const withRequestId = createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.heartbeat',
+                version: '1.0.0',
+                requestId
+            });
+
+            // Test without requestId (manually creating message)
+            const withoutRequestId = new MessageUtils.Parser(Buffer.from(MessageUtils.serialize({
+                action: ActionType.REQUEST,
+                topic: 'system.heartbeat',
+                version: '1.0.0'
+            }, {})));
+
+            // Handle message with requestId
+            registry.handleSystemMessage(serviceId, withRequestId);
+            expect(connectionManager.sendMessage).toHaveBeenLastCalledWith(
+                serviceId,
+                expect.objectContaining({
+                    requestId
+                }),
+                expect.any(Object),
+                undefined
+            );
+
+            // Handle message without requestId
+            registry.handleSystemMessage(serviceId, withoutRequestId);
+            expect(connectionManager.sendMessage).toHaveBeenLastCalledWith(
+                serviceId,
+                expect.objectContaining({
+                action: ActionType.RESPONSE,
+                topic: 'system.heartbeat',
+                    version: '1.0.0'
+                }),
+                expect.any(Object),
+                undefined
             );
         });
 
-        it('should handle topic subscription failure', () => {
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.topic.subscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {
-                    topic: 'test.topic',
-                },
-            };
+        it('should handle heartbeat messages', () => {
+            const serviceId = 'test-service';
+            const requestId = randomUUID();
+            registry.registerService(serviceId);
 
-            mockSubscriptionManager.subscribe.mockReturnValue(false);
-            (TopicUtils.isValid as jest.Mock).mockReturnValue(false);
-            serviceRegistry.registerService(serviceId);
+            // Test with requestId
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.heartbeat',
+                version: '1.0.0',
+                requestId
+            }));
 
-            serviceRegistry.handleSystemMessage(serviceId, message);
-
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
+            expect(connectionManager.sendMessage).toHaveBeenCalledWith(
                 serviceId,
-                {
+                expect.objectContaining({
                     action: ActionType.RESPONSE,
-                    topic: 'system.topic.subscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                {
-                    error: {
-                        code: 'INVALID_REQUEST',
-                        message: 'Missing or invalid topic',
-                        timestamp: mockDate.toISOString(),
-                        details: { topic: 'test.topic' },
-                    },
-                }
+                    topic: 'system.heartbeat',
+                requestId
+                }),
+                { status: 'success' },
+                undefined
+            );
+
+            // Test without requestId (manually creating message)
+            const withoutRequestId = new MessageUtils.Parser(Buffer.from(MessageUtils.serialize({
+                action: ActionType.REQUEST,
+                topic: 'system.heartbeat',
+                version: '1.0.0'
+            }, {})));
+
+            registry.handleSystemMessage(serviceId, withoutRequestId);
+            expect(connectionManager.sendMessage).toHaveBeenLastCalledWith(
+                serviceId,
+                expect.objectContaining({
+                    action: ActionType.RESPONSE,
+                    topic: 'system.heartbeat'
+                }),
+                { status: 'success' },
+                undefined
             );
         });
 
-        it('should handle topic unsubscription failure', () => {
-            const message: Message = {
-                header: {
+        it('should handle error logging with and without requestId', () => {
+            const serviceId = randomUUID();
+            const requestId = randomUUID();
+            registry.registerService(serviceId);
+            const logger = (SetupLogger as jest.Mock)();
+
+            // Test with requestId
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.unknown',
+                version: '1.0.0',
+                requestId
+            }))).toThrow(TopicNotSupportedError);
+
+            expect(logger.error).toHaveBeenLastCalledWith(
+                expect.stringContaining(`:${requestId}`),
+                expect.any(Object)
+            );
+
+            // Test without requestId (manually creating message)
+            const withoutRequestId = new MessageUtils.Parser(Buffer.from(MessageUtils.serialize({
+                action: ActionType.REQUEST,
+                topic: 'system.unknown',
+                version: '1.0.0'
+            }, {})));
+
+            expect(() => registry.handleSystemMessage(serviceId, withoutRequestId))
+                .toThrow(TopicNotSupportedError);
+
+            expect(logger.error).toHaveBeenLastCalledWith(
+                expect.not.stringContaining('::'),  // Should not have double colons that would indicate an empty requestId
+                expect.any(Object)
+            );
+        });
+
+        it('should handle missing serviceErrorRate metric', () => {
+            const serviceId = 'test-service';
+            registry.registerService(serviceId);
+
+            // Mock serviceErrorRate.getMetric to return undefined
+            const mockServiceErrorRate = registry['metrics'].serviceErrorRate;
+            mockServiceErrorRate.getMetric = jest.fn().mockReturnValue(undefined);
+
+            // Trigger an error that would increment the error rate
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.unknown',
+                version: '1.0.0'
+            }))).toThrow(TopicNotSupportedError);
+
+            // Verify getMetric was called but add was not (since metric was undefined)
+            expect(mockServiceErrorRate.getMetric).toHaveBeenCalledWith({ serviceId });
+            expect(mockServiceErrorRate.getMetric({ serviceId })?.slot?.add).toBeUndefined();
+        });
+
+        it('should handle topic subscription requests', () => {
+            const serviceId = 'test-service';
+            registry.registerService(serviceId);
+
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.topic.subscribe',
+                version: '1.0.0'
+            }, {
+                topic: 'test.topic',
+                priority: 0
+            }));
+
+            expect(subscriptionManager.subscribe).toHaveBeenCalledWith(
+                serviceId,
+                'test.topic',
+                0
+            );
+        });
+
+        it('should handle topic unsubscription requests', () => {
+            const serviceId = 'test-service';
+            registry.registerService(serviceId);
+
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.topic.unsubscribe',
+                version: '1.0.0'
+            }, {
+                topic: 'test.topic'
+            }));
+
+            expect(subscriptionManager.unsubscribe).toHaveBeenCalledWith(
+                serviceId,
+                'test.topic'
+            );
+        });
+
+        it('should handle log subscription requests', () => {
+            const serviceId = 'test-service';
+            registry.registerService(serviceId);
+
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.log.subscribe',
+                version: '1.0.0'
+            }, {
+                levels: ['info', 'error'],
+                regex: 'test.*'
+            }));
+
+            // Trigger a log event that matches subscription
+            const logEntry: LogEntry = {
+                level: 'info',
+                message: 'test message',
+                timestamp: new Date().toISOString()
+            };
+            registry['handleLog'](logEntry);
+
+            expect(connectionManager.sendMessage).toHaveBeenCalledWith(
+                serviceId,
+                expect.objectContaining({
+                    topic: 'system.log'
+                }),
+                logEntry,
+                undefined
+            );
+        });
+
+        it('should handle log subscription requests with error', () => {
+            const serviceId = 'test-service';
+            registry.registerService(serviceId);
+
+            // Subscribe to logs
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.log.subscribe',
+                version: '1.0.0'
+            }, {
+                levels: ['info', 'error'],
+                regex: 'test.*'
+            }));
+
+            // Mock connectionManager.sendMessage to throw an error
+            connectionManager.sendMessage = jest.fn().mockImplementationOnce(() => {
+                throw new Error('Failed to send message');
+            });
+
+            // Trigger a log event that matches subscription
+            const logEntry: LogEntry = {
+                level: 'info',
+                message: 'test message',
+                timestamp: new Date().toISOString()
+            };
+            registry['handleLog'](logEntry);
+
+            // Verify error was handled gracefully
+            expect(connectionManager.sendMessage).toHaveBeenCalledWith(
+                serviceId,
+                expect.objectContaining({
+                    topic: 'system.log'
+                }),
+                logEntry,
+                undefined
+            );
+        });
+
+        it('should throw error for unknown system topics', () => {
+            const serviceId = 'test-service';
+            registry.registerService(serviceId);
+
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.unknown',
+                version: '1.0.0'
+            }))).toThrow(TopicNotSupportedError);
+        });
+
+        it('should throw error when service not found in heartbeat message', () => {
+            const serviceId = 'non-existent-service';
+            const requestId = randomUUID();
+
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.heartbeat',
+                version: '1.0.0',
+                requestId
+            }))).toThrow('Service non-existent-service not found');
+
+            expect(connectionManager.removeConnection).toHaveBeenCalledWith(serviceId);
+        });
+
+        it('should throw error when service not found in log subscription request', () => {
+            const serviceId = 'non-existent-service';
+            const requestId = randomUUID();
+
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.log.subscribe',
+                version: '1.0.0',
+                requestId
+            }, {
+                levels: ['info', 'error'],
+                regex: 'test.*'
+            }))).toThrow('Service non-existent-service not found');
+
+            expect(connectionManager.removeConnection).toHaveBeenCalledWith(serviceId);
+        });
+
+        it('should throw error when service not found in metrics request', () => {
+            const serviceId = 'non-existent-service';
+            const requestId = randomUUID();
+
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
                     action: ActionType.REQUEST,
+                topic: 'system.metrics',
+                    version: '1.0.0',
+                requestId
+            }, {
+                showAll: true,
+                paramFilter: { service: serviceId }
+            }))).toThrow('Service non-existent-service not found');
+
+            expect(connectionManager.removeConnection).toHaveBeenCalledWith(serviceId);
+        });
+
+        it('should throw error for invalid action type in heartbeat message', () => {
+            const serviceId = 'test-service';
+            registry.registerService(serviceId);
+
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.PUBLISH,  // Invalid action for heartbeat
+                    topic: 'system.heartbeat',
+                version: '1.0.0'
+            }))).toThrow(InvalidRequestError);
+        });
+
+        it('should throw error for non-request action in non-heartbeat message', () => {
+            const serviceId = 'test-service';
+            registry.registerService(serviceId);
+
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.RESPONSE,  // Only REQUEST is valid for non-heartbeat
+                topic: 'system.service.list',
+                version: '1.0.0'
+            }))).toThrow(InvalidRequestError);
+        });
+
+        it('should handle metrics request', () => {
+            const serviceId = 'test-service';
+            const requestId = randomUUID();
+            registry.registerService(serviceId);
+
+            // Mock monitoringManager.serializeMetrics
+            const mockMetrics = { metric1: 1, metric2: 2 };
+            monitoringManager.serializeMetrics = jest.fn().mockReturnValue(mockMetrics);
+
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.metrics',
+                version: '1.0.0',
+                requestId
+            }, {
+                showAll: true,
+                paramFilter: { service: serviceId }
+            }));
+
+            expect(monitoringManager.serializeMetrics).toHaveBeenCalledWith(true, { service: serviceId });
+            expect(connectionManager.sendMessage).toHaveBeenCalledWith(
+                serviceId,
+                expect.objectContaining({
+                    action: ActionType.RESPONSE,
+                    topic: 'system.metrics',
+                    requestId
+                }),
+                { metrics: mockMetrics },
+                undefined
+            );
+        });
+
+        it('should handle service subscriptions request', () => {
+            const serviceId = randomUUID();
+            const requestId = randomUUID();
+            registry.registerService(serviceId);
+
+            // Mock subscriptionManager.getSubscribedInfo
+            const mockSubscriptions = [{ topic: 'test.topic', priority: 0 }];
+            subscriptionManager.getSubscribedInfo = jest.fn().mockReturnValue(mockSubscriptions);
+
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.service.subscriptions',
+                version: '1.0.0',
+                requestId
+            }, {
+                serviceId
+            }));
+
+            expect(subscriptionManager.getSubscribedInfo).toHaveBeenCalledWith(serviceId);
+            expect(connectionManager.sendMessage).toHaveBeenCalledWith(
+                serviceId,
+                expect.objectContaining({
+                    action: ActionType.RESPONSE,
+                    topic: 'system.service.subscriptions',
+                    requestId
+                }),
+                { subscriptions: mockSubscriptions },
+                undefined
+            );
+        });
+
+        it('should throw error for invalid service ID in subscriptions request', () => {
+            const serviceId = randomUUID();
+            const invalidTargetId = 'not-a-uuid';
+            const requestId = randomUUID();
+            registry.registerService(serviceId);
+
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.service.subscriptions',
+                version: '1.0.0',
+                requestId
+            }, {
+                serviceId: invalidTargetId
+            }))).toThrow(InvalidRequestError);
+        });
+
+        it('should handle service register request', () => {
+            const serviceId = 'test-service';
+            const requestId = randomUUID();
+            const name = 'Test Service';
+            const description = 'A test service';
+
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.service.register',
+                version: '1.0.0',
+                requestId
+            }, {
+                name,
+                description
+            }));
+
+            // Verify service was registered by checking service list
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.service.list',
+                version: '1.0.0'
+            }));
+
+            expect(connectionManager.sendMessage).toHaveBeenCalledWith(
+                serviceId,
+                expect.any(Object),
+                expect.objectContaining({
+                    services: expect.arrayContaining([
+                expect.objectContaining({
+                        id: serviceId,
+                            name,
+                            description
+                        })
+                    ])
+                }),
+                undefined
+            );
+        });
+
+        it('should handle log unsubscription requests', () => {
+            const serviceId = 'test-service';
+            const requestId = randomUUID();
+            registry.registerService(serviceId);
+
+            // First subscribe to logs
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.log.subscribe',
+                version: '1.0.0'
+            }, {
+                levels: ['info', 'error'],
+                regex: 'test.*'
+            }));
+
+            // Then unsubscribe
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.log.unsubscribe',
+                version: '1.0.0',
+                requestId
+            }));
+
+            // Verify unsubscription
+            expect(subscriptionManager.unsubscribe).toHaveBeenCalledWith(serviceId, 'system.log');
+            expect(connectionManager.sendMessage).toHaveBeenLastCalledWith(
+                serviceId,
+                expect.objectContaining({
+                    action: ActionType.RESPONSE,
+                    topic: 'system.log.unsubscribe',
+                    requestId
+                }),
+                { status: 'success' },
+                undefined
+            );
+
+            // Verify log subscriptions were reset
+            const service = registry['services'].get(serviceId);
+            expect(service?.logSubscriptions).toEqual({ levels: [], regex: undefined });
+        });
+
+        it('should throw error when unsubscribing logs for non-existent service', () => {
+            const serviceId = 'non-existent-service';
+            const requestId = randomUUID();
+
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.log.unsubscribe',
+                version: '1.0.0',
+                requestId
+            }))).toThrow('Service non-existent-service not found');
+
+            expect(connectionManager.removeConnection).toHaveBeenCalledWith(serviceId);
+        });
+
+        it('should throw error when requesting subscriptions for non-existent service', () => {
+            const serviceId = randomUUID();
+            const requestId = randomUUID();
+
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.service.subscriptions',
+                    version: '1.0.0',
+                requestId
+            }))).toThrow('Service ' + serviceId + ' not found');
+
+            expect(connectionManager.removeConnection).toHaveBeenCalledWith(serviceId);
+        });
+
+        it('should throw error when target service is not found in subscriptions request', () => {
+            const serviceId = randomUUID();
+            const targetServiceId = randomUUID();
+            const requestId = randomUUID();
+            registry.registerService(serviceId);
+
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.service.subscriptions',
+                version: '1.0.0',
+                requestId
+            }, {
+                serviceId: targetServiceId
+            }))).toThrow('Service ' + targetServiceId + ' not found');
+        });
+
+        it('should throw error for invalid payload in service register request', () => {
+            const serviceId = randomUUID();
+            const requestId = randomUUID();
+            registry.registerService(serviceId);
+
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.service.register',
+                version: '1.0.0',
+                requestId
+            }, {
+                name: null,  // Invalid name
+                description: 'test'
+            }))).toThrow(InvalidRequestError);
+
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.service.register',
+                version: '1.0.0',
+                requestId
+            }, {
+                name: 'test',
+                description: null  // Invalid description
+            }))).toThrow(InvalidRequestError);
+        });
+
+        it('should validate topic in subscription request', () => {
+            const serviceId = randomUUID();
+            const requestId = randomUUID();
+            registry.registerService(serviceId);
+
+            // Test missing topic
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.topic.subscribe',
+                version: '1.0.0',
+                requestId
+            }, {
+                priority: 0
+            }))).toThrow('Missing or invalid topic');
+
+            // Test invalid topic
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.topic.subscribe',
+                version: '1.0.0',
+                requestId
+            }, {
+                topic: 'invalid..topic',
+                priority: 0
+            }))).toThrow('Missing or invalid topic');
+
+            // Test restricted system topic
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.topic.subscribe',
+                version: '1.0.0',
+                requestId
+            }, {
+                topic: 'system.restricted',
+                priority: 0
+            }))).toThrow('Unable to subscribe to restricted topic');
+
+            // Test invalid priority
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.topic.subscribe',
+                version: '1.0.0',
+                requestId
+            }, {
+                topic: 'test.topic',
+                priority: NaN
+            }))).toThrow('Invalid priority');
+        });
+
+        it('should validate topic in unsubscription request', () => {
+            const serviceId = randomUUID();
+            const requestId = randomUUID();
+            registry.registerService(serviceId);
+
+            // Test missing topic
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.topic.unsubscribe',
+                version: '1.0.0',
+                requestId
+            }, {}))).toThrow('Missing or invalid topic');
+
+            // Test invalid topic
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.topic.unsubscribe',
+                version: '1.0.0',
+                requestId
+            }, {
+                topic: 'invalid..topic'
+            }))).toThrow('Missing or invalid topic');
+
+            // Test restricted system topic
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.topic.unsubscribe',
+                version: '1.0.0',
+                requestId
+            }, {
+                topic: 'system.restricted'
+            }))).toThrow('Unable to unsubscribe from restricted topic');
+        });
+
+        it('should handle topic unsubscription success and failure', () => {
+            const serviceId = randomUUID();
+            const requestId = randomUUID();
+            registry.registerService(serviceId);
+
+            // Mock success case
+            subscriptionManager.unsubscribe = jest.fn().mockReturnValueOnce(true);
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.topic.unsubscribe',
+                version: '1.0.0',
+                requestId
+            }, {
+                topic: 'test.topic'
+            }));
+            expect(connectionManager.sendMessage).toHaveBeenLastCalledWith(
+                serviceId,
+                expect.objectContaining({
+                    action: ActionType.RESPONSE,
                     topic: 'system.topic.unsubscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {
-                    topic: 'test.topic',
-                },
-            };
+                    requestId
+                }),
+                { status: 'success' },
+                undefined
+            );
 
-            mockSubscriptionManager.unsubscribe.mockReturnValue(false);
-            (TopicUtils.isValid as jest.Mock).mockReturnValue(false);
-            serviceRegistry.registerService(serviceId);
-
-            serviceRegistry.handleSystemMessage(serviceId, message);
-
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
+            // Mock failure case
+            subscriptionManager.unsubscribe = jest.fn().mockReturnValueOnce(false);
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.topic.unsubscribe',
+                version: '1.0.0',
+                requestId
+            }, {
+                topic: 'test.topic'
+            }));
+            expect(connectionManager.sendMessage).toHaveBeenLastCalledWith(
                 serviceId,
-                {
+                expect.objectContaining({
                     action: ActionType.RESPONSE,
                     topic: 'system.topic.unsubscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                {
-                    error: {
-                        code: 'INVALID_REQUEST',
-                        message: 'Missing or invalid topic',
-                        timestamp: mockDate.toISOString(),
-                        details: { topic: 'test.topic' },
-                    },
-                }
+                    requestId
+                }),
+                { status: 'failure' },
+                undefined
             );
         });
 
-        it('should handle unknown system topic', () => {
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.unknown',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {},
-            };
+        it('should validate log levels in subscription request', () => {
+            const serviceId = randomUUID();
+            const requestId = randomUUID();
+            registry.registerService(serviceId);
 
-            serviceRegistry.handleSystemMessage(serviceId, message);
-
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                serviceId,
-                {
-                    action: ActionType.RESPONSE,
-                    topic: 'system.unknown',
-                    requestid: requestId,
+            // Test non-array levels
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.log.subscribe',
                     version: '1.0.0',
-                },
-                {
-                    error: {
-                        code: 'TOPIC_NOT_SUPPORTED',
-                        message: 'Unknown system message topic: system.unknown',
-                        timestamp: mockDate.toISOString(),
-                        details: undefined,
-                    },
-                }
-            );
+                requestId
+            }, {
+                levels: 'info'  // Should be an array
+            }))).toThrow('Invalid log levels');
+
+            // Test invalid log level
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.log.subscribe',
+                    version: '1.0.0',
+                requestId
+            }, {
+                levels: ['invalid']
+            }))).toThrow('Invalid log level');
         });
 
-        it('should handle service registration with valid payload', () => {
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.service.register',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {
-                    name: 'test-service-name',
-                    description: 'test service description',
-                },
-            };
+        it('should validate log regex in subscription request', () => {
+            const serviceId = randomUUID();
+            const requestId = randomUUID();
+            registry.registerService(serviceId);
 
-            serviceRegistry.handleSystemMessage(serviceId, message);
+            // Test invalid regex type
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.log.subscribe',
+                version: '1.0.0',
+                requestId
+            }, {
+                levels: ['info'],
+                regex: 123  // Should be a string
+            }))).toThrow('Invalid log regex');
 
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                serviceId,
-                {
-                    action: ActionType.RESPONSE,
-                    topic: 'system.service.register',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                { status: 'success' }
-            );
+            // Test invalid regex pattern
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.log.subscribe',
+                version: '1.0.0',
+                requestId
+            }, {
+                levels: ['info'],
+                regex: '['  // Invalid regex pattern
+            }))).toThrow('Invalid log regex');
         });
 
-        it('should handle service registration with invalid payload', () => {
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.service.register',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {
-                    name: 123, // Invalid type
-                    description: null, // Invalid type
-                },
-            };
+        it('should handle log subscription and response', () => {
+            const serviceId = randomUUID();
+            const requestId = randomUUID();
+            registry.registerService(serviceId);
 
-            serviceRegistry.handleSystemMessage(serviceId, message);
+            // Mock subscriptionManager.isSubscribed to return false first
+            subscriptionManager.isSubscribed = jest.fn().mockReturnValueOnce(false);
 
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.log.subscribe',
+                version: '1.0.0',
+                requestId
+            }, {
+                levels: ['info', 'error'],
+                regex: 'test.*'
+            }));
+
+            // Verify subscription was added
+            expect(subscriptionManager.subscribe).toHaveBeenCalledWith(serviceId, 'system.log');
+
+            // Verify success response
+            expect(connectionManager.sendMessage).toHaveBeenLastCalledWith(
                 serviceId,
-                {
+                expect.objectContaining({
                     action: ActionType.RESPONSE,
-                    topic: 'system.service.register',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                {
-                    error: {
-                        code: 'INVALID_REQUEST',
-                        message: 'Missing or invalid name or description',
-                        timestamp: mockDate.toISOString(),
-                        details: { name: 123, description: null },
-                    },
-                }
+                    topic: 'system.log.subscribe',
+                    requestId
+                }),
+                { status: 'success' },
+                undefined
             );
         });
 
         it('should handle service list request', () => {
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.service.list',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {},
-            };
+            const serviceId = randomUUID();
+            const requestId = randomUUID();
+            const name = 'Test Service';
+            const description = 'A test service';
+            const now = new Date();
 
             // Register a service first
-            serviceRegistry.registerService(serviceId, 'test-service-name', 'test service description');
-            serviceRegistry.handleSystemMessage(serviceId, message);
+            registry.registerService(serviceId, name, description);
 
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.service.list',
+                version: '1.0.0',
+                requestId
+            }));
+
+            // Verify response
+            expect(connectionManager.sendMessage).toHaveBeenLastCalledWith(
                 serviceId,
-                {
+                expect.objectContaining({
                     action: ActionType.RESPONSE,
                     topic: 'system.service.list',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                {
-                    services: [{
-                        id: serviceId,
-                        name: 'test-service-name',
-                        description: 'test service description',
-                        connectedAt: mockDate,
-                    }],
-                }
+                    requestId
+                }),
+                expect.objectContaining({
+                    services: expect.arrayContaining([
+                        expect.objectContaining({
+                            id: serviceId,
+                            name,
+                            description,
+                            lastHeartbeat: expect.any(String)
+                        })
+                    ])
+                }),
+                undefined
+            );
+        });
+
+        it('should handle topic subscription success and failure', () => {
+            const serviceId = randomUUID();
+            const requestId = randomUUID();
+            registry.registerService(serviceId);
+
+            // Mock success case
+            subscriptionManager.subscribe = jest.fn().mockReturnValueOnce(true);
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.topic.subscribe',
+                version: '1.0.0',
+                requestId
+            }, {
+                topic: 'test.topic',
+                priority: 0
+            }));
+            expect(connectionManager.sendMessage).toHaveBeenLastCalledWith(
+                serviceId,
+                expect.objectContaining({
+                    action: ActionType.RESPONSE,
+                    topic: 'system.topic.subscribe',
+                    requestId
+                }),
+                { status: 'success' },
+                undefined
+            );
+
+            // Mock failure case
+            subscriptionManager.subscribe = jest.fn().mockReturnValueOnce(false);
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.topic.subscribe',
+                version: '1.0.0',
+                requestId
+            }, {
+                topic: 'test.topic',
+                priority: 0
+            }));
+            expect(connectionManager.sendMessage).toHaveBeenLastCalledWith(
+                serviceId,
+                expect.objectContaining({
+                    action: ActionType.RESPONSE,
+                    topic: 'system.topic.subscribe',
+                    requestId
+                }),
+                { status: 'failure' },
+                undefined
             );
         });
 
         it('should handle topic list request', () => {
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
+            const serviceId = randomUUID();
+            const requestId = randomUUID();
+            registry.registerService(serviceId);
+
+            // Mock getAllSubscribedTopics
+            const mockTopics = ['topic1', 'topic2'];
+            subscriptionManager.getAllSubscribedTopics = jest.fn().mockReturnValue(mockTopics);
+
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.topic.list',
+                version: '1.0.0',
+                requestId
+            }));
+
+            expect(subscriptionManager.getAllSubscribedTopics).toHaveBeenCalled();
+            expect(connectionManager.sendMessage).toHaveBeenCalledWith(
+                serviceId,
+                expect.objectContaining({
+                    action: ActionType.RESPONSE,
                     topic: 'system.topic.list',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {},
+                    requestId
+                }),
+                { topics: mockTopics },
+                undefined
+            );
+        });
+
+        it('should handle topic subscribers request', () => {
+            const serviceId = randomUUID();
+            const requestId = randomUUID();
+            registry.registerService(serviceId);
+
+            // Mock getAllSubscribedTopicWithSubscribers
+            const mockSubscribers = {
+                'topic1': [{ serviceId: 'service1', priority: 0 }],
+                'topic2': [{ serviceId: 'service2', priority: 1 }]
             };
+            subscriptionManager.getAllSubscribedTopicWithSubscribers = jest.fn().mockReturnValue(mockSubscribers);
 
-            const mockTopics = ['topic1', 'topic2', 'topic3'];
-            mockSubscriptionManager.getAllSubscribedTopics.mockReturnValue(mockTopics);
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.topic.subscribers',
+                version: '1.0.0',
+                requestId
+            }));
 
-            serviceRegistry.handleSystemMessage(serviceId, message);
-
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
+            expect(subscriptionManager.getAllSubscribedTopicWithSubscribers).toHaveBeenCalled();
+            expect(connectionManager.sendMessage).toHaveBeenCalledWith(
                 serviceId,
-                {
+                expect.objectContaining({
                     action: ActionType.RESPONSE,
-                    topic: 'system.topic.list',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                { topics: mockTopics }
+                    topic: 'system.topic.subscribers',
+                    requestId
+                }),
+                { subscribers: mockSubscribers },
+                undefined
             );
         });
 
-        it('should handle log subscription with valid payload', () => {
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.log.subscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {
-                    level: 'error',
-                    codes: ['ERR_001', 'ERR_002'],
-                },
-            };
+        it('should handle log subscription with and without payload parameters', () => {
+            const serviceId = randomUUID();
+            const requestId = randomUUID();
+            registry.registerService(serviceId);
 
-            serviceRegistry.registerService(serviceId);
-            serviceRegistry.handleSystemMessage(serviceId, message);
+            // Test with empty payload (should use defaults)
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.log.subscribe',
+                version: '1.0.0',
+                requestId
+            }, {}));
 
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                serviceId,
-                {
-                    action: ActionType.RESPONSE,
-                    topic: 'system.log.subscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                { status: 'success' }
-            );
-        });
+            // Verify default values were used
+            const service = registry['services'].get(serviceId);
+            expect(service?.logSubscriptions).toEqual({
+                levels: ['error'],  // Default level
+                regex: undefined    // Default regex
+            });
 
-        it('should handle log subscription with invalid level', () => {
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.log.subscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {
-                    level: 'invalid_level',
-                    codes: ['ERR_001'],
-                },
-            };
+            // Test with full payload
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.log.subscribe',
+                version: '1.0.0',
+                requestId
+            }, {
+                levels: ['info', 'error'],
+                regex: 'test.*'
+            }));
 
-            serviceRegistry.registerService(serviceId);
-            serviceRegistry.handleSystemMessage(serviceId, message);
-
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                serviceId,
-                {
-                    action: ActionType.RESPONSE,
-                    topic: 'system.log.subscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                {
-                    error: {
-                        code: 'INVALID_REQUEST',
-                        message: 'Invalid log level',
-                        timestamp: mockDate.toISOString(),
-                        details: { level: 'invalid_level' },
-                    },
-                }
-            );
-        });
-
-        it('should handle log subscription with invalid codes', () => {
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.log.subscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {
-                    level: 'error',
-                    codes: 'not_an_array',
-                },
-            };
-
-            serviceRegistry.registerService(serviceId);
-            serviceRegistry.handleSystemMessage(serviceId, message);
-
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                serviceId,
-                {
-                    action: ActionType.RESPONSE,
-                    topic: 'system.log.subscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                {
-                    error: {
-                        code: 'INVALID_REQUEST',
-                        message: 'Invalid log codes',
-                        timestamp: mockDate.toISOString(),
-                        details: { codes: 'not_an_array' },
-                    },
-                }
-            );
-        });
-
-        it('should handle log unsubscribe', () => {
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.log.unsubscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {},
-            };
-
-            serviceRegistry.registerService(serviceId);
-            serviceRegistry.handleSystemMessage(serviceId, message);
-
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                serviceId,
-                {
-                    action: ActionType.RESPONSE,
-                    topic: 'system.log.unsubscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                { status: 'success' }
-            );
-        });
-
-        it('should handle metric request', () => {
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.metric',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {},
-            };
-
-            serviceRegistry.handleSystemMessage(serviceId, message);
-
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                serviceId,
-                {
-                    action: ActionType.RESPONSE,
-                    topic: 'system.metric',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                {
-                    error: {
-                        code: 'SERVICE_UNAVAILABLE',
-                        message: 'Metric collection not implemented yet',
-                        timestamp: mockDate.toISOString(),
-                        details: undefined,
-                    },
-                }
-            );
-        });
-
-        it('should handle service cleanup on heartbeat timeout', () => {
-            serviceRegistry.registerService(serviceId, 'test-service', 'test description');
-
-            // Fast forward time to trigger heartbeat timeout
-            jest.advanceTimersByTime(60000); // 60 seconds
-
-            expect(mockConnectionManager.removeConnection).toHaveBeenCalledWith(serviceId);
-        });
-
-        it('should handle log subscription for unregistered service', () => {
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.log.subscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {
-                    level: 'error',
-                    codes: ['ERR_001'],
-                },
-            };
-
-            // Don't register the service
-            serviceRegistry.handleSystemMessage(serviceId, message);
-
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                serviceId,
-                {
-                    action: ActionType.RESPONSE,
-                    topic: 'system.log.subscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                {
-                    error: {
-                        code: 'SERVICE_UNAVAILABLE',
-                        message: `Service ${serviceId} not found`,
-                        timestamp: mockDate.toISOString(),
-                        details: undefined,
-                    },
-                }
-            );
-            expect(mockConnectionManager.removeConnection).toHaveBeenCalledWith(serviceId);
-        });
-
-        it('should handle log unsubscription for unregistered service', () => {
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.log.unsubscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {},
-            };
-
-            // Don't register the service
-            serviceRegistry.handleSystemMessage(serviceId, message);
-
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                serviceId,
-                {
-                    action: ActionType.RESPONSE,
-                    topic: 'system.log.unsubscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                {
-                    error: {
-                        code: 'SERVICE_UNAVAILABLE',
-                        message: `Service ${serviceId} not found`,
-                        timestamp: mockDate.toISOString(),
-                        details: undefined,
-                    },
-                }
-            );
-            expect(mockConnectionManager.removeConnection).toHaveBeenCalledWith(serviceId);
-        });
-
-        it('should handle topic subscription to restricted system topic', () => {
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.topic.subscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {
-                    topic: 'system.heartbeat',
-                    priority: 1,
-                },
-            };
-
-            (TopicUtils.isValid as jest.Mock).mockReturnValue(true);
-            serviceRegistry.handleSystemMessage(serviceId, message);
-
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                serviceId,
-                {
-                    action: ActionType.RESPONSE,
-                    topic: 'system.topic.subscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                {
-                    error: {
-                        code: 'INVALID_REQUEST',
-                        message: 'Unable to subscribe to restricted topic',
-                        timestamp: mockDate.toISOString(),
-                        details: { topic: 'system.heartbeat' },
-                    },
-                }
-            );
-        });
-
-        it('should handle topic subscription with invalid priority', () => {
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.topic.subscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {
-                    topic: 'test.topic',
-                    priority: NaN,
-                },
-            };
-
-            (TopicUtils.isValid as jest.Mock).mockReturnValue(true);
-            serviceRegistry.handleSystemMessage(serviceId, message);
-
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                serviceId,
-                {
-                    action: ActionType.RESPONSE,
-                    topic: 'system.topic.subscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                {
-                    error: {
-                        code: 'INVALID_REQUEST',
-                        message: 'Invalid priority',
-                        timestamp: mockDate.toISOString(),
-                        details: { priority: NaN },
-                    },
-                }
-            );
-        });
-
-        it('should handle invalid action type for heartbeat', () => {
-            const message: Message = {
-                header: {
-                    action: ActionType.PUBLISH,  // Invalid action type
-                    topic: 'system.heartbeat',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {},
-            };
-
-            expect(() => serviceRegistry.handleSystemMessage(serviceId, message)).toThrow(
-                new InvalidRequestError(
-                    'Invalid action, expected REQUEST or RESPONSE for system.heartbeat',
-                    { action: ActionType.PUBLISH, topic: 'system.heartbeat' }
-                )
-            );
-        });
-
-        it('should handle invalid action type for non-heartbeat topics', () => {
-            const message: Message = {
-                header: {
-                    action: ActionType.RESPONSE,  // Invalid action type
-                    topic: 'system.service.list',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {},
-            };
-
-            expect(() => serviceRegistry.handleSystemMessage(serviceId, message)).toThrow(
-                new InvalidRequestError(
-                    'Invalid action, expected REQUEST for system.service.list',
-                    { action: ActionType.RESPONSE, topic: 'system.service.list' }
-                )
-            );
-        });
-
-        it('should handle log subscription with default values', () => {
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.log.subscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {},  // Empty payload to test both defaults
-            };
-
-            serviceRegistry.registerService(serviceId);
-            serviceRegistry.handleSystemMessage(serviceId, message);
-
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                serviceId,
-                {
-                    action: ActionType.RESPONSE,
-                    topic: 'system.log.subscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                { status: 'success' }
-            );
-        });
-
-        it('should handle failed topic subscription', () => {
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.topic.subscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {
-                    topic: 'test.topic',
-                    priority: 1,
-                },
-            };
-
-            mockSubscriptionManager.subscribe.mockReturnValue(false);
-            serviceRegistry.handleSystemMessage(serviceId, message);
-
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                serviceId,
-                {
-                    action: ActionType.RESPONSE,
-                    topic: 'system.topic.subscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                { status: 'failure' }
-            );
-        });
-
-        it('should handle failed topic unsubscription', () => {
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.topic.unsubscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {
-                    topic: 'test.topic',
-                },
-            };
-
-            mockSubscriptionManager.unsubscribe.mockReturnValue(false);
-            serviceRegistry.handleSystemMessage(serviceId, message);
-
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                serviceId,
-                {
-                    action: ActionType.RESPONSE,
-                    topic: 'system.topic.unsubscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                { status: 'failure' }
-            );
+            // Verify custom values were used
+            expect(service?.logSubscriptions).toEqual({
+                levels: ['info', 'error'],
+                regex: expect.any(RegExp)
         });
     });
 
-    describe('registerService', () => {
-        it('should register a new service', () => {
-            const name = 'test-service';
-            const description = 'test description';
+        it('should handle service subscriptions with and without serviceId in payload', () => {
+            const serviceId = randomUUID();
+            const requestId = randomUUID();
+            registry.registerService(serviceId);
 
-            serviceRegistry.registerService(serviceId, name, description);
+            // Mock subscriptionManager.getSubscribedInfo
+            const mockSubscriptions = [{ topic: 'test.topic', priority: 0 }];
+            subscriptionManager.getSubscribedInfo = jest.fn().mockReturnValue(mockSubscriptions);
 
-            // Trigger a service list request to verify the service was registered
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.service.list',
-                    requestid: requestId,
+            // Test without serviceId in payload (should use requesting service's ID)
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.service.subscriptions',
+                version: '1.0.0',
+                requestId
+            }, {}));
+
+            expect(subscriptionManager.getSubscribedInfo).toHaveBeenLastCalledWith(serviceId);
+
+            // Test with serviceId in payload
+            const targetServiceId = randomUUID();
+            registry.registerService(targetServiceId);  // Register target service
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.service.subscriptions',
                     version: '1.0.0',
-                },
-                payload: {},
-            };
+                requestId
+            }, {
+                serviceId: targetServiceId
+            }));
 
-            serviceRegistry.handleSystemMessage(serviceId, message);
-
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                serviceId,
-                {
-                    action: ActionType.RESPONSE,
-                    topic: 'system.service.list',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                {
-                    services: [{
-                        id: serviceId,
-                        name,
-                        description,
-                        connectedAt: mockDate,
-                    }],
-                }
-            );
-        });
-
-        it('should update existing service on re-registration', () => {
-            const name1 = 'test-service-1';
-            const description1 = 'test description 1';
-            const name2 = 'test-service-2';
-            const description2 = 'test description 2';
-
-            serviceRegistry.registerService(serviceId, name1, description1);
-            serviceRegistry.registerService(serviceId, name2, description2);
-
-            // Trigger a service list request to verify the service was updated
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.service.list',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {},
-            };
-
-            serviceRegistry.handleSystemMessage(serviceId, message);
-
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                serviceId,
-                {
-                    action: ActionType.RESPONSE,
-                    topic: 'system.service.list',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                {
-                    services: [{
-                        id: serviceId,
-                        name: name2,
-                        description: description2,
-                        connectedAt: mockDate,
-                    }],
-                }
-            );
+            expect(subscriptionManager.getSubscribedInfo).toHaveBeenLastCalledWith(targetServiceId);
         });
     });
 
-    describe('clearAllServices', () => {
-        it('should clear all registered services', async () => {
-            // Register multiple services
-            serviceRegistry.registerService('service1', 'Service 1', 'Description 1');
-            serviceRegistry.registerService('service2', 'Service 2', 'Description 2');
-
-            // Clear all services
-            await serviceRegistry.clearAllServices();
-
-            // Verify services were cleared by checking service list
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.service.list',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {},
-            };
-
-            serviceRegistry.handleSystemMessage('service1', message);
-
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                'service1',
-                {
-                    action: ActionType.RESPONSE,
-                    topic: 'system.service.list',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                { services: [] }
-            );
+    describe('Heartbeat', () => {
+        beforeEach(() => {
+            jest.useFakeTimers();
         });
 
-        it('should remove connections for all cleared services', async () => {
-            // Register multiple services
-            serviceRegistry.registerService('service1', 'Service 1', 'Description 1');
-            serviceRegistry.registerService('service2', 'Service 2', 'Description 2');
-
-            // Clear all services
-            await serviceRegistry.clearAllServices();
-
-            // Verify connections were removed
-            expect(mockConnectionManager.removeConnection).toHaveBeenCalledWith('service1');
-            expect(mockConnectionManager.removeConnection).toHaveBeenCalledWith('service2');
+        afterEach(() => {
+            jest.useRealTimers();
         });
-    });
 
-    describe('heartbeat timeout', () => {
-        it('should remove service after heartbeat timeout', () => {
-            serviceRegistry.registerService(serviceId, 'Test Service', 'Description');
+        it('should send heartbeat after retry timeout', () => {
+            const serviceId = randomUUID();
+            registry.registerService(serviceId);
 
-            // Fast forward time past the heartbeat timeout
-            jest.advanceTimersByTime(60000); // 60 seconds
+            // Fast forward past the retry timeout
+            jest.advanceTimersByTime(config.connection.heartbeatRetryTimeout);
 
-            // Verify service was removed
-            expect(mockConnectionManager.removeConnection).toHaveBeenCalledWith(serviceId);
-
-            // Verify service is no longer in the registry
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.service.list',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {},
-            };
-
-            serviceRegistry.handleSystemMessage(serviceId, message);
-
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
+            // Verify heartbeat was sent
+            expect(connectionManager.sendMessage).toHaveBeenCalledWith(
                 serviceId,
-                {
-                    action: ActionType.RESPONSE,
-                    topic: 'system.service.list',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                { services: [] }
-            );
-        });
-
-        it('should not remove service if heartbeat is received before timeout', () => {
-            serviceRegistry.registerService(serviceId, 'Test Service', 'Description');
-
-            // Clear any initial calls
-            jest.clearAllMocks();
-
-            // Fast forward time but not past the timeout
-            jest.advanceTimersByTime(30000); // 30 seconds
-
-            // Send a heartbeat
-            const message: Message = {
-                header: {
+                expect.objectContaining({
                     action: ActionType.REQUEST,
                     topic: 'system.heartbeat',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {},
-            };
-
-            serviceRegistry.handleSystemMessage(serviceId, message);
-
-            // Fast forward remaining time
-            jest.advanceTimersByTime(30000); // Another 30 seconds
-
-            // Verify service was not removed
-            expect(mockConnectionManager.removeConnection).not.toHaveBeenCalled();
-
-            // Verify service is still in the registry
-            const listMessage: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.service.list',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {},
-            };
-
-            serviceRegistry.handleSystemMessage(serviceId, listMessage);
-
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                serviceId,
-                {
-                    action: ActionType.RESPONSE,
-                    topic: 'system.service.list',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                {
-                    services: [{
-                        id: serviceId,
-                        name: 'Test Service',
-                        description: 'Description',
-                        connectedAt: mockDate,
-                    }],
-                }
+                    version: '1.0.0'
+                }),
+                undefined,
+                undefined
             );
+        });
+
+        it('should unregister service after deregister timeout', () => {
+            const serviceId = randomUUID();
+            registry.registerService(serviceId);
+
+            // Fast forward past the deregister timeout
+            jest.advanceTimersByTime(config.connection.heartbeatDeregisterTimeout);
+
+            // Verify service was unregistered
+            expect(subscriptionManager.unsubscribe).toHaveBeenCalledWith(serviceId);
+            expect(connectionManager.removeConnection).toHaveBeenCalledWith(serviceId);
         });
     });
 
-    describe('resetHeartbeat', () => {
-        it('should not reset heartbeat for non-existent service', () => {
-            // Try to reset heartbeat for a service that doesn't exist
-            const setTimeoutSpy = jest.spyOn(global, 'setTimeout');
-            serviceRegistry.resetHeartbeat('non-existent-service');
+    describe('Metrics', () => {
+        it('should track service count', () => {
+            const serviceId1 = 'test-service-1';
+            const serviceId2 = 'test-service-2';
 
-            // Verify no timeouts were set
-            expect(setTimeoutSpy).not.toHaveBeenCalled();
-            setTimeoutSpy.mockRestore();
+            // Register services and verify count updates
+            registry.registerService(serviceId1);
+            expect(registry['metrics'].count.slot.value).toBe(1);
+
+            registry.registerService(serviceId2);
+            expect(registry['metrics'].count.slot.value).toBe(2);
+
+            registry.unregisterService(serviceId1);
+            expect(registry['metrics'].count.slot.value).toBe(1);
         });
+
+        it('should track registration and unregistration rates', async () => {
+            const serviceId = 'test-service';
+
+            // Register service and verify registration rate metric
+            registry.registerService(serviceId);
+            await new Promise(resolve => setTimeout(resolve, 1100)); // Wait for rate calculation
+            expect(registry['metrics'].registrationRate.slot.value).toBeGreaterThan(0);
+
+            // Unregister service and verify unregistration rate metric
+            registry.unregisterService(serviceId);
+            await new Promise(resolve => setTimeout(resolve, 1100)); // Wait for rate calculation
+            expect(registry['metrics'].unregistrationRate.slot.value).toBeGreaterThan(0);
+        }, 5000);
     });
 
-    describe('handleTopicSubscribe', () => {
-        it('should handle successful topic subscription', () => {
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.topic.subscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {
-                    topic: 'test.topic',
-                    priority: 1,
-                },
-            };
+    describe('Cleanup', () => {
+        it('should properly dispose all resources', () => {
+            const serviceId = 'test-service';
+            registry.registerService(serviceId);
 
-            mockSubscriptionManager.subscribe.mockReturnValue(true);
-            serviceRegistry.handleSystemMessage(serviceId, message);
+            // Spy on the metrics dispose method
+            const disposeSpy = jest.spyOn(registry['metrics'], 'dispose');
 
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                serviceId,
-                {
-                    action: ActionType.RESPONSE,
-                    topic: 'system.topic.subscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                { status: 'success' }
-            );
-        });
-    });
+            registry.dispose();
 
-    describe('handleTopicUnsubscribe', () => {
-        it('should handle successful topic unsubscription', () => {
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.topic.unsubscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {
-                    topic: 'test.topic',
-                },
-            };
+            // Verify all services are unregistered
+            expect(subscriptionManager.unsubscribe).toHaveBeenCalledWith(serviceId);
+            expect(connectionManager.removeConnection).toHaveBeenCalledWith(serviceId);
 
-            mockSubscriptionManager.unsubscribe.mockReturnValue(true);
-            serviceRegistry.handleSystemMessage(serviceId, message);
-
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                serviceId,
-                {
-                    action: ActionType.RESPONSE,
-                    topic: 'system.topic.unsubscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                { status: 'success' }
-            );
-        });
-
-        it('should handle unsubscription from restricted system topic', () => {
-            const message: Message = {
-                header: {
-                    action: ActionType.REQUEST,
-                    topic: 'system.topic.unsubscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                payload: {
-                    topic: 'system.heartbeat',
-                },
-            };
-
-            mockSubscriptionManager.unsubscribe.mockReturnValue(true);
-            serviceRegistry.handleSystemMessage(serviceId, message);
-
-            expect(mockConnectionManager.sendMessage).toHaveBeenCalledWith(
-                serviceId,
-                {
-                    action: ActionType.RESPONSE,
-                    topic: 'system.topic.unsubscribe',
-                    requestid: requestId,
-                    version: '1.0.0',
-                },
-                {
-                    error: {
-                        code: 'INVALID_REQUEST',
-                        message: 'Unable to unsubscribe from restricted topic',
-                        timestamp: mockDate.toISOString(),
-                        details: { topic: 'system.heartbeat' },
-                    },
-                }
-            );
+            // Verify metrics are disposed
+            expect(disposeSpy).toHaveBeenCalled();
         });
     });
 });

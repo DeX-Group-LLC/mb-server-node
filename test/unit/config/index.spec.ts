@@ -1,6 +1,5 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { loadConfig } from '@config';
 
 // Mock dependencies
 jest.mock('fs');
@@ -27,8 +26,12 @@ describe('Config', () => {
         // Mock path.join to return a test path
         (path.join as jest.Mock).mockReturnValue('/test/path/config.yaml');
 
+        // Load config module
+        expect(() => {
+            const { loadConfig } = require('@config');
+        }).toThrow('File not found');
+
         // Verify error is thrown and logged
-        expect(() => loadConfig('/test/path/config.yaml')).toThrow('File not found');
         expect(console.error).toHaveBeenCalledWith(
             'Error loading configuration:',
             expect.any(Error)
@@ -42,8 +45,12 @@ describe('Config', () => {
         // Mock path.join to return a test path
         (path.join as jest.Mock).mockReturnValue('/test/path/config.yaml');
 
+        // Load config module
+        expect(() => {
+            const { loadConfig } = require('@config');
+        }).toThrow('bad indentation of a mapping entry');
+
         // Verify error is thrown and logged
-        expect(() => loadConfig('/test/path/config.yaml')).toThrow();
         expect(console.error).toHaveBeenCalledWith(
             'Error loading configuration:',
             expect.any(Error)
@@ -90,7 +97,8 @@ describe('Config', () => {
                 outstanding: {
                     requests: 100
                 }
-            }
+            },
+            ssl: {} // Add empty SSL object to match default config
         };
 
         // Mock fs.readFileSync to return valid YAML
@@ -109,8 +117,13 @@ describe('Config', () => {
             CONNECTION_MAX_CONCURRENT: '2000',
             REQUEST_RESPONSE_TIMEOUT_DEFAULT: '45000',
             REQUEST_RESPONSE_TIMEOUT_MAX: '90000',
-            MAX_OUTSTANDING_REQUESTS: '200'
+            MAX_OUTSTANDING_REQUESTS: '200',
+            SSL_KEY: '/path/to/key.pem',
+            SSL_CERT: '/path/to/cert.pem'
         };
+
+        // Load config module
+        const { loadConfig } = require('@config');
 
         // Load config with environment overrides
         const config = loadConfig('/test/path/config.yaml');
@@ -126,6 +139,8 @@ describe('Config', () => {
         expect(config.request.response.timeout.default).toBe(45000);
         expect(config.request.response.timeout.max).toBe(90000);
         expect(config.max.outstanding.requests).toBe(200);
+        expect(config.ssl.key).toBe('/path/to/key.pem');
+        expect(config.ssl.cert).toBe('/path/to/cert.pem');
 
         // Restore original environment
         process.env = originalEnv;
