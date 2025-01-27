@@ -23,9 +23,9 @@ The header consists of required and optional fields, separated by colons:
 ### Field Descriptions
 
 1. **Required Fields**
-   - `action`: The message type/action (e.g., "publish", "subscribe")
-   - `topic`: The message topic/route
-   - `version`: Semantic version of the message format
+   - `action`: The message action type (e.g., publish, request, response)
+   - `topic`: The message topic
+   - `version`: Message format version (semver)
 
 2. **Optional Fields**
    - `requestId`: UUID4 for request tracking

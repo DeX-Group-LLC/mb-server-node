@@ -117,25 +117,25 @@ Timeout values for request-response patterns:
 
 1. Simple Publish:
 ```
-publish:service/event:1.0.0
+publish:service.event:1.0.0:550e8400-e29b-41d4-a716-446655440000
 ```
 
 2. Subscribe:
 ```
-subscribe:market/prices:2.0.0
+subscribe:market.prices:2.0.0:550e8400-e29b-41d4-a716-446655440001
 ```
 
 3. Request with Timeout:
 ```
-request:service/action:1.0.0:550e8400-e29b-41d4-a716-446655440000::5000
+request:service.action:1.0.0:550e8400-e29b-41d4-a716-446655440002::5000
 ```
 
-4. Error Response:
+4. Response:
 ```
-error:service/action:1.0.0:550e8400-e29b-41d4-a716-446655440000
+response:service.action:1.0.0:550e8400-e29b-41d4-a716-446655440003:550e8400-e29b-41d4-a716-446655440002
 ```
 
 5. Chained Request:
 ```
-request:service/action:1.0.0:550e8400-e29b-41d4-a716-446655440000:123e4567-e89b-12d3-a456-426614174000:3000
+request:service.action:1.0.0:550e8400-e29b-41d4-a716-446655440004:123e4567-e89b-12d3-a456-426614174000:3000
 ```
