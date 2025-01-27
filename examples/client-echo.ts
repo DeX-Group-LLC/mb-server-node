@@ -3,6 +3,7 @@ import { Socket } from 'net';
 import { randomUUID } from 'crypto';
 import { config } from '../src/config';
 import { ActionType } from '../src/core/types';
+import { connect as tlsConnect } from 'tls';
 
 // Configuration flags to enable/disable different roles
 const ENABLE_REQUESTER = true;
@@ -38,8 +39,14 @@ function frameTcpMessage(message: string): Buffer {
 const requester = ENABLE_REQUESTER ? new WebSocket(`${process.env.WS_PROTOCOL ?? 'ws'}://${config.host}:${config.port}`) : null;
 const listener = ENABLE_LISTENER ? new WebSocket(`${process.env.WS_PROTOCOL ?? 'ws'}://${config.host}:${config.port}`) : null;
 
-// Create TCP connection for responder
-const responder = ENABLE_RESPONDER ? new Socket() : null;
+// Create TCP/TLS connection for responder
+const responder = ENABLE_RESPONDER ? (process.env.WS_PROTOCOL === 'wss'
+    ? tlsConnect({
+        host: config.host,
+        port: config.port
+    })
+    : new Socket())
+    : null;
 
 // Requester setup
 if (requester) {

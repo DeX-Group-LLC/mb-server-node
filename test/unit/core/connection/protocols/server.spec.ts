@@ -742,5 +742,133 @@ describe('CombinedServer', () => {
             const logger = require('@utils/logger').SetupLogger();
             expect(logger.error).toHaveBeenCalledWith('Error closing WebSocket server:', wsCloseError);
         });
+
+        /**
+         * Tests handling of TLS client errors
+         */
+        it('should handle TLS client errors gracefully', () => {
+            const { createServer } = require('tls');
+            createServer.mockReturnValue(mockServer);
+
+            // Configure SSL
+            (config as jest.Mocked<typeof config>).ssl = {
+                key: 'key.pem',
+                cert: 'cert.pem',
+            };
+
+            // Initialize tlsErrorHandler with a no-op function
+            let tlsErrorHandler: (err: Error, tlsSocket: Socket) => void = () => {};
+
+            mockServer.on.mockImplementation((event: string, handler: any) => {
+                if (event === 'tlsClientError') {
+                    tlsErrorHandler = handler;
+                }
+                return mockServer;
+            });
+
+            createCombinedServer(mockConnectionManager);
+
+            // Verify TLS error handler was set up
+            expect(tlsErrorHandler).toBeDefined();
+
+            // Test ECONNRESET error
+            const mockTlsSocket = { remoteAddress: '127.0.0.1', destroy: jest.fn() };
+            const resetError = new Error('read ECONNRESET');
+            (resetError as any).code = 'ECONNRESET';
+            tlsErrorHandler(resetError, mockTlsSocket as any);
+
+            // Should log at debug level for ECONNRESET
+            const logger = require('@utils/logger').SetupLogger();
+            expect(logger.debug).toHaveBeenCalledWith('TLS handshake aborted by client (IP 127.0.0.1)');
+            expect(mockTlsSocket.destroy).toHaveBeenCalled();
+
+            // Test other TLS error
+            const otherError = new Error('TLS error');
+            tlsErrorHandler(otherError, mockTlsSocket as any);
+
+            // Should log at error level for other TLS errors
+            expect(logger.error).toHaveBeenCalledWith('TLS error with client (IP 127.0.0.1):', otherError);
+            expect(mockTlsSocket.destroy).toHaveBeenCalledTimes(2);
+        });
+
+        /**
+         * Tests SSL connection handling
+         */
+        it('should handle SSL connections with proper configuration', () => {
+            const { createServer } = require('tls');
+            createServer.mockReturnValue(mockServer);
+
+            // Configure SSL
+            (config as jest.Mocked<typeof config>).ssl = {
+                key: 'key.pem',
+                cert: 'cert.pem',
+            };
+
+            const server = createCombinedServer(mockConnectionManager);
+
+            // Verify server was created with SSL config
+            expect(createServer).toHaveBeenCalledWith({
+                key: undefined, // fs.readFileSync is mocked
+                cert: undefined, // fs.readFileSync is mocked
+            });
+
+            // Simulate SSL connection
+            connectionHandler(mockSocket);
+
+            // Verify connection is handled normally after SSL handshake
+            mockSocket.once('data', mockDataHandler);
+            mockDataHandler(Buffer.from('SSL data'));
+
+            expect(TCPSocketConnection).toHaveBeenCalledWith(mockSocket, '127.0.0.1');
+            expect(mockConnectionManager.addConnection).toHaveBeenCalled();
+        });
+
+        /**
+         * Tests handling of TLS client errors with undefined remoteAddress
+         */
+        it('should handle TLS client errors with undefined remoteAddress', () => {
+            const { createServer } = require('tls');
+            createServer.mockReturnValue(mockServer);
+
+            // Configure SSL
+            (config as jest.Mocked<typeof config>).ssl = {
+                key: 'key.pem',
+                cert: 'cert.pem',
+            };
+
+            // Initialize tlsErrorHandler with a no-op function
+            let tlsErrorHandler: (err: Error, tlsSocket: Socket) => void = () => {};
+
+            mockServer.on.mockImplementation((event: string, handler: any) => {
+                if (event === 'tlsClientError') {
+                    tlsErrorHandler = handler;
+                }
+                return mockServer;
+            });
+
+            createCombinedServer(mockConnectionManager);
+
+            // Verify TLS error handler was set up
+            expect(tlsErrorHandler).toBeDefined();
+
+            // Test ECONNRESET error with undefined remoteAddress
+            const mockTlsSocket = { remoteAddress: undefined, destroy: jest.fn() };
+            const resetError = new Error('read ECONNRESET');
+            (resetError as any).code = 'ECONNRESET';
+            tlsErrorHandler(resetError, mockTlsSocket as any);
+
+            // Should log at debug level for ECONNRESET with 'unknown' IP
+            const logger = require('@utils/logger').SetupLogger();
+            expect(logger.debug).toHaveBeenCalledWith('TLS handshake aborted by client (IP unknown)');
+            expect(mockTlsSocket.destroy).toHaveBeenCalled();
+
+            // Test other TLS error with undefined remoteAddress
+            const otherError = new Error('TLS error');
+            tlsErrorHandler(otherError, mockTlsSocket as any);
+
+            // Should log at error level for other TLS errors with 'unknown' IP
+            expect(logger.error).toHaveBeenCalledWith('TLS error with client (IP unknown):', otherError);
+            expect(mockTlsSocket.destroy).toHaveBeenCalledTimes(2);
+        });
     });
 });

@@ -31,9 +31,24 @@ export function createCombinedServer(connectionManager: ConnectionManager): Comb
     const server = config.ssl && config.ssl.key && config.ssl.cert
         ? createTlsServer({
             key: fs.readFileSync(config.ssl.key),
-            cert: fs.readFileSync(config.ssl.cert)
+            cert: fs.readFileSync(config.ssl.cert),
+            // Add proper TLS error handling
+            //handshakeTimeout: 10000, // 10 seconds timeout for handshake
         })
         : createTcpServer();
+
+    // Add specific TLS error handling
+    if (config.ssl && config.ssl.key && config.ssl.cert) {
+        server.on('tlsClientError', (err, tlsSocket) => {
+            const ip = tlsSocket.remoteAddress || 'unknown';
+            if (err.code === 'ECONNRESET') {
+                logger.debug(`TLS handshake aborted by client (IP ${ip})`);
+            } else {
+                logger.error(`TLS error with client (IP ${ip}):`, err);
+            }
+            tlsSocket.destroy();
+        });
+    }
 
     // Create WebSocket server without a dedicated HTTP server
     const wss = new WebSocketServer({
