@@ -6,24 +6,36 @@ import { createWebSocketServer, WebSocketConnection } from '@core/connection/web
 import { ConnectionState } from '@core/connection/types';
 import { InternalError } from '@core/errors';
 import logger from '@utils/logger';
+import fs from 'fs';
+import { createServer } from 'https';
+import { config } from '@config';
 
-jest.mock('ws');
-jest.mock('@utils/logger');
-
-// Mock config before imports
 jest.mock('@config', () => ({
     config: {
         port: 8080,
         message: {
             payload: {
-                maxLength: 32 * 1024, // 32KB
-            },
-        },
-        logging: {
-            level: 'error',
-        },
-    },
+                maxLength: 32 * 1024
+            }
+        }
+    }
 }));
+jest.mock('fs');
+jest.mock('https');
+jest.mock('ws');
+jest.mock('@utils/logger', () => {
+    const mockLogger = {
+        info: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        debug: jest.fn()
+    };
+    return {
+        __esModule: true,
+        default: mockLogger,
+        SetupLogger: jest.fn().mockReturnValue(mockLogger)
+    };
+});
 
 /**
  * Extended WebSocket interface for testing.
@@ -63,8 +75,27 @@ describe('WebSocket Implementation', () => {
     let errorHandler: (error: Error) => void;
 
     beforeEach(() => {
-        // Reset all mocks before each test
+        // Create mock connection manager with all required methods
+        mockConnectionManager = {
+            onConnection: jest.fn(),
+            addConnection: jest.fn(),
+            removeConnection: jest.fn(),
+            sendMessage: jest.fn(),
+        } as any;
+
+        // Reset all mocks and config
         jest.clearAllMocks();
+
+        // Reset config to initial state before each test
+        Object.assign(config, {
+            port: 8080,
+            message: {
+                payload: {
+                    maxLength: 32 * 1024 // 32KB
+                }
+            },
+            ssl: undefined
+        });
 
         // Create mock WebSocket with full implementation
         mockWs = {
@@ -133,13 +164,6 @@ describe('WebSocket Implementation', () => {
             method: 'GET',
             url: '/',
         } as Partial<IncomingMessage>;
-
-        // Create mock connection manager
-        mockConnectionManager = {
-            addConnection: jest.fn(),
-            removeConnection: jest.fn(),
-            sendMessage: jest.fn(),
-        } as unknown as jest.Mocked<ConnectionManager>;
 
         // Create mock WebSocket server with handlers
         wss = {
@@ -278,6 +302,47 @@ describe('WebSocket Implementation', () => {
             expect(loggerSpy).toHaveBeenCalledWith('WebSocket server error:', testError);
             loggerSpy.mockRestore();
         });
+
+        /**
+         * Tests WebSocket server creation with SSL configuration.
+         * Should create a secure WebSocket server when SSL config is present.
+         */
+        it('should create WebSocket server with SSL when SSL config is present', () => {
+            // Add SSL config to the mock config
+            Object.assign(config, {
+                ssl: {
+                    key: '/path/to/key.pem',
+                    cert: '/path/to/cert.pem'
+                }
+            });
+
+            // Mock fs readFileSync
+            const mockKey = Buffer.from('mock-key');
+            const mockCert = Buffer.from('mock-cert');
+            (fs.readFileSync as jest.Mock)
+                .mockReturnValueOnce(mockKey)
+                .mockReturnValueOnce(mockCert);
+
+            // Mock https server
+            const mockHttpsServer = {
+                listen: jest.fn().mockReturnThis()
+            };
+            (createServer as jest.Mock).mockReturnValue(mockHttpsServer);
+
+            // Create WebSocket server
+            createWebSocketServer(mockConnectionManager);
+
+            // Verify SSL setup
+            expect(fs.readFileSync).toHaveBeenCalledWith('/path/to/key.pem');
+            expect(fs.readFileSync).toHaveBeenCalledWith('/path/to/cert.pem');
+            expect(createServer).toHaveBeenCalledWith({ key: mockKey, cert: mockCert });
+            expect(mockHttpsServer.listen).toHaveBeenCalledWith(config.port);
+            expect(WebSocketServer).toHaveBeenCalledWith({
+                maxPayload: config.message.payload.maxLength + 512,
+                server: mockHttpsServer
+            });
+            expect(logger.info).toHaveBeenCalledWith('SSL is enabled');
+        });
     });
 
     /**
@@ -361,7 +426,7 @@ describe('WebSocket Implementation', () => {
 
                 // Verify listener was registered and received message
                 expect(mockWs.on).toHaveBeenCalledWith('message', expect.any(Function));
-                expect(listener).toHaveBeenCalledWith(testMessage);
+                expect(listener).toHaveBeenCalledWith(Buffer.from(testMessage));
             });
         });
 
