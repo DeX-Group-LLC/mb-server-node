@@ -53,24 +53,33 @@ npm start
 
 ## Configuration
 
-The broker can be configured through a YAML file. Below are all available configuration options:
+The broker can be configured through environment variables or a YAML file. The configuration is loaded in the following order of precedence:
+
+1. Environment variables (highest priority)
+2. Custom YAML file specified by `CONFIG_PATH` environment variable
+3. Default configuration (lowest priority)
+
+Below are all available configuration options with their default values and descriptions:
 
 ```yaml
 # Server Configuration
-port: 3000                    # WebSocket server port
-host: 'localhost'             # Host to bind to
+port: 3000                    # Port number for the WebSocket server
+host: 'localhost'             # Host address to bind the server to
+ssl:                         # Optional SSL/TLS configuration
+  key: ''                    # Path to SSL private key file
+  cert: ''                   # Path to SSL certificate file
 
 # Logging Configuration
 logging:
-  level: 'info'              # Logging level (info, debug, warn, error)
+  level: 'info'              # Log level (debug, info, warn, error)
   format: 'json'             # Log format (json, text)
 
 # Authentication Configuration
 auth:
   failure:
     lockout:
-      threshold: 5           # Number of failed attempts before lockout
-      duration: 60          # Lockout duration in seconds
+      threshold: 5           # Number of failed authentication attempts before lockout
+      duration: 60          # Duration of lockout in seconds
 
 # Rate Limiting Configuration
 rate:
@@ -81,36 +90,87 @@ rate:
         topic: 0           # Global rate limit per topic (0 = unlimited)
     topic:
       per:
-        service: {}        # Per-topic rate limits for services
+        service: {}        # Per-topic rate limits for services (key-value pairs)
 
 # Connection Management
 connection:
   max:
-    concurrent: 100        # Maximum number of concurrent connections
-  heartbeatRetryTimeout: 30000      # Time in ms before retrying heartbeat
-  heartbeatDeregisterTimeout: 60000  # Time in ms before deregistering on heartbeat failure
+    concurrent: 100        # Maximum number of concurrent WebSocket connections
+  heartbeatRetryTimeout: 30000      # Milliseconds to wait before retrying failed heartbeat
+  heartbeatDeregisterTimeout: 60000  # Milliseconds to wait before deregistering service on heartbeat failure
 
 # Request/Response Configuration
 request:
   response:
     timeout:
-      default: 5000       # Default timeout for requests in ms
-      max: 3600000       # Maximum allowed timeout in ms (1 hour)
+      default: 5000       # Default request timeout in milliseconds
+      max: 3600000       # Maximum allowed request timeout in milliseconds (1 hour)
 
-# Message Configuration
+# Resource Limits
 max:
   outstanding:
-    requests: 10000      # Maximum number of pending requests
+    requests: 10000      # Maximum number of concurrent pending requests
+
+# Message Configuration
 message:
   payload:
-    maxLength: 16384    # Maximum message size in bytes (16KB)
+    maxLength: 16384    # Maximum message payload size in bytes (16KB)
 
 # Monitoring Configuration
 monitoring:
-  interval: 60000       # Metrics collection interval in ms (1 minute)
+  interval: 60000       # Metrics collection interval in milliseconds
 ```
 
-These configuration options can be customized by creating a custom YAML file and setting the `CONFIG_PATH` environment variable to point to it.
+### Environment Variables
+
+Environment variables can be loaded in two ways:
+1. Through a `.env` file in the project root
+2. Directly from the system environment
+
+Here's a comprehensive list of all supported environment variables:
+
+**Server Configuration**
+- `PORT` - WebSocket server port (default: 3000)
+- `HOST` - Host address to bind to (default: 'localhost')
+- `SSL_KEY` - Path to SSL private key file
+- `SSL_CERT` - Path to SSL certificate file
+
+**Authentication Configuration**
+- `AUTH_FAILURE_LOCKOUT_THRESHOLD` - Failed auth attempts before lockout (default: 5)
+- `AUTH_FAILURE_LOCKOUT_DURATION` - Lockout duration in seconds (default: 60)
+
+**Rate Limiting Configuration**
+- `RATE_LIMIT_GLOBAL_PER_SERVICE` - Global rate limit per service (default: 0)
+- `RATE_LIMIT_GLOBAL_PER_TOPIC` - Global rate limit per topic (default: 0)
+
+**Connection Management**
+- `CONNECTION_MAX_CONCURRENT` - Max concurrent WebSocket connections (default: 100)
+
+**Request/Response Configuration**
+- `REQUEST_RESPONSE_TIMEOUT_DEFAULT` - Default request timeout in ms (default: 5000)
+- `REQUEST_RESPONSE_TIMEOUT_MAX` - Maximum request timeout in ms (default: 3600000)
+
+**Resource Limits**
+- `MAX_OUTSTANDING_REQUESTS` - Max concurrent pending requests (default: 10000)
+
+**Special Configuration**
+- `CONFIG_PATH` - Path to custom YAML configuration file (default: src/config/default.yaml)
+
+Note: The environment variables shown above reflect the actual implementation. While the YAML configuration supports additional options, they can only be set through the YAML configuration file or by modifying the source code to support additional environment variables.
+
+### Custom Configuration File
+
+To use a custom configuration file:
+
+```bash
+# Set the path to your custom config file
+export CONFIG_PATH=/path/to/your/config.yaml
+
+# Start the broker
+npm start
+```
+
+The custom configuration will be merged with the default configuration, with custom values taking precedence.
 
 ## Usage
 
