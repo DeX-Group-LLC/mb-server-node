@@ -29,7 +29,7 @@ const NEWLINE_CHAR = '\n'.charCodeAt(0);
  * This is the sum of the maximum lengths of the action, topic, version, requestId, parentRequestId, and timeout.
  * The action is the longest action name, the topic is the maximum topic length, the version is the semver range, the requestId is the UUID length, the parentRequestId is the UUID length, and the timeout is the maximum timeout value.
  */
-const MAX_HEADER_LENGTH = Object.values(ActionType).reduce((acc, action) => Math.max(acc, action.length), 0) + 1 + Topic.MAX_TOPIC_LENGTH + 1 + 20 + 1 + 36 + 1 + 36 + 1 + config.request.response.timeout.max.toString().length;
+export const MAX_HEADER_LENGTH = Object.values(ActionType).reduce((acc, action) => Math.max(acc, action.length), 0) + 1 + Topic.MAX_TOPIC_LENGTH + 1 + 20 + 1 + 36 + 1 + 36 + 1 + config.request.response.timeout.max.toString().length;
 
 const ERROR_KEY = Buffer.from('error:');
 

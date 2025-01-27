@@ -1,4 +1,5 @@
 import { WebSocket } from 'ws';
+import { Socket } from 'net';
 import { randomUUID } from 'crypto';
 import { config } from '../src/config';
 import { ActionType } from '../src/core/types';
@@ -25,10 +26,20 @@ function createMessage(action: ActionType, topic: string, payload: any = {}, req
     return createHeader(action, topic, requestId, parentRequestId, timeout) + '\n' + JSON.stringify(payload);
 }
 
+// Helper function for TCP framing
+function frameTcpMessage(message: string): Buffer {
+    const messageBuffer = Buffer.from(message);
+    const lengthBuffer = Buffer.alloc(4);
+    lengthBuffer.writeUInt32BE(messageBuffer.length);
+    return Buffer.concat([lengthBuffer, messageBuffer]);
+}
+
 // Create WebSocket connections based on configuration
 const requester = ENABLE_REQUESTER ? new WebSocket(`${process.env.WS_PROTOCOL ?? 'ws'}://${config.host}:${config.port}`) : null;
-const responder = ENABLE_RESPONDER ? new WebSocket(`${process.env.WS_PROTOCOL ?? 'ws'}://${config.host}:${config.port}`) : null;
 const listener = ENABLE_LISTENER ? new WebSocket(`${process.env.WS_PROTOCOL ?? 'ws'}://${config.host}:${config.port}`) : null;
+
+// Create TCP connection for responder
+const responder = ENABLE_RESPONDER ? new Socket() : null;
 
 // Requester setup
 if (requester) {
@@ -37,7 +48,7 @@ if (requester) {
         // Register as Test Requester
         requester.send(createMessage(ActionType.REQUEST, 'system.service.register', {
             name: 'Test Requester',
-            description: 'Sends test requests periodically'
+            description: '[WS] Sends test requests periodically'
         }, randomUUID()));
 
         if (ENABLE_LISTENER) {
@@ -60,58 +71,85 @@ if (requester) {
 
     requester.on('message', (data: Buffer) => {
         const message = data.toString();
-        console.log('Requester received message:', message);
     });
 }
 
-// Responder setup
+// Responder setup (TCP)
 if (responder) {
-    responder.on('open', () => {
+    responder.on('connect', () => {
         console.log('Responder connected');
         // Register as Test Responder
-        responder.send(createMessage(ActionType.REQUEST, 'system.service.register', {
+        responder.write(frameTcpMessage(createMessage(ActionType.REQUEST, 'system.service.register', {
             name: 'Test Responder',
-            description: 'Responds to test messages and triggers additional events'
-        }, randomUUID()));
+            description: '[TCP] Responds to test messages and triggers additional events using TCP'
+        }, randomUUID())));
 
         // Subscribe to test.message
-        responder.send(createMessage(ActionType.REQUEST, 'system.topic.subscribe', {
+        responder.write(frameTcpMessage(createMessage(ActionType.REQUEST, 'system.topic.subscribe', {
             topic: 'test.message',
             priority: 1
-        }, randomUUID()));
+        }, randomUUID())));
 
         if (ENABLE_LISTENER) {
             // Subscribe to test.trigger.publish
-            responder.send(createMessage(ActionType.REQUEST, 'system.topic.subscribe', {
+            responder.write(frameTcpMessage(createMessage(ActionType.REQUEST, 'system.topic.subscribe', {
                 topic: 'test.end',
                 priority: 0
-            }, randomUUID()));
+            }, randomUUID())));
         }
     });
 
-    responder.on('message', (data: Buffer) => {
-        const message = data.toString();
-        if (message.includes('test.message')) {
-            // Echo back the original message
-            const [header, payloadStr] = message.split('\n');
-            const payload = JSON.parse(payloadStr);
-            const [action, topic, version, requestId] = header.split(':'); // Extract original requestId
+    let buffer = Buffer.alloc(0);
+    let expectedLength = -1;
 
-            // Send response to the original request
-            responder.send(createMessage(ActionType.RESPONSE, 'test.message', payload, requestId, requestId));
+    responder.on('data', (data: Buffer) => {
+        buffer = Buffer.concat([buffer, data]);
 
-            // Send additional trigger messages with the original request as parent
-            responder.send(createMessage(ActionType.PUBLISH, 'test.trigger.publish', {
-                timestamp: new Date().toISOString(),
-                triggeredBy: 'responder'
-            }, randomUUID(), requestId));
+        while (true) {
+            // If we don't have a length yet, try to read it
+            if (expectedLength === -1) {
+                if (buffer.length < 4) return; // Need more data
+                expectedLength = buffer.readUInt32BE(0);
+                buffer = buffer.subarray(4);
+            }
 
-            responder.send(createMessage(ActionType.REQUEST, 'test.trigger.request', {
-                timestamp: new Date().toISOString(),
-                triggeredBy: 'responder'
-            }, randomUUID(), requestId));
+            // Check if we have enough data for the complete message
+            if (buffer.length < expectedLength) return; // Need more data
+
+            // Extract the message
+            const messageBuffer = buffer.subarray(0, expectedLength);
+            const message = messageBuffer.toString();
+            buffer = buffer.subarray(expectedLength);
+            expectedLength = -1;
+
+            if (message.includes('test.message')) {
+                // Echo back the original message
+                const [header, payloadStr] = message.split('\n');
+                const payload = JSON.parse(payloadStr);
+                const [action, topic, version, requestId] = header.split(':'); // Extract original requestId
+
+                // Send response to the original request
+                responder.write(frameTcpMessage(createMessage(ActionType.RESPONSE, 'test.message', payload, requestId, requestId)));
+
+                // Send additional trigger messages with the original request as parent
+                responder.write(frameTcpMessage(createMessage(ActionType.PUBLISH, 'test.trigger.publish', {
+                    timestamp: new Date().toISOString(),
+                    triggeredBy: 'responder'
+                }, randomUUID(), requestId)));
+
+                responder.write(frameTcpMessage(createMessage(ActionType.REQUEST, 'test.trigger.request', {
+                    timestamp: new Date().toISOString(),
+                    triggeredBy: 'responder'
+                }, randomUUID(), requestId)));
+            }
+
+            // If no more data to process, break
+            if (buffer.length < 4) break;
         }
     });
+
+    // Connect to the server
+    responder.connect(config.port, config.host);
 }
 
 // Listener setup
@@ -121,7 +159,7 @@ if (listener) {
         // Register as Test Listener
         listener.send(createMessage(ActionType.REQUEST, 'system.service.register', {
             name: 'Test Listener',
-            description: 'Listens for trigger messages and sends end signal'
+            description: '[WS] Listens for trigger messages and sends end signal'
         }, randomUUID()));
 
         // Subscribe to both trigger topics
@@ -163,21 +201,38 @@ if (listener) {
 // Error handling for all connections
 const activeConnections = [
     { ws: requester, name: 'Requester' },
-    { ws: responder, name: 'Responder' },
+    { ws: responder, name: 'Responder (TCP)', isTcp: true },
     { ws: listener, name: 'Listener' }
 ].filter(conn => conn.ws !== null);
 
-activeConnections.forEach(({ ws, name }) => {
-    (ws as WebSocket).on('error', (err: Error) => {
-        console.error(`${name} error:`, err);
-        if (err.message.includes('ECONNREFUSED')) {
-            console.error(`Could not connect to the Message Broker. Make sure it is running and the host/port are correct.`);
-        }
-        process.exit(1);
-    });
+activeConnections.forEach(({ ws, name, isTcp }) => {
+    if (isTcp) {
+        // TCP error handling
+        (ws as Socket).on('error', (err: Error) => {
+            console.error(`${name} error:`, err);
+            if (err.message.includes('ECONNREFUSED')) {
+                console.error(`Could not connect to the Message Broker. Make sure it is running and the host/port are correct.`);
+            }
+            process.exit(1);
+        });
 
-    (ws as WebSocket).on('close', () => {
-        console.log(`${name} disconnected`);
-        process.exit(0);
-    });
+        (ws as Socket).on('close', () => {
+            console.log(`${name} disconnected`);
+            process.exit(0);
+        });
+    } else {
+        // WebSocket error handling
+        (ws as WebSocket).on('error', (err: Error) => {
+            console.error(`${name} error:`, err);
+            if (err.message.includes('ECONNREFUSED')) {
+                console.error(`Could not connect to the Message Broker. Make sure it is running and the host/port are correct.`);
+            }
+            process.exit(1);
+        });
+
+        (ws as WebSocket).on('close', () => {
+            console.log(`${name} disconnected`);
+            process.exit(0);
+        });
+    }
 });

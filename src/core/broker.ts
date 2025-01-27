@@ -1,7 +1,7 @@
-import { WebSocketServer } from 'ws';
+import { Server } from 'net';
 import { config } from '@config';
-import { ConnectionManager } from '@core/connection';
-import { createWebSocketServer } from '@core/connection/websocket';
+import { ConnectionManager } from '@core/connection/manager';
+import { CombinedServer, createCombinedServer } from '@core/connection/protocols';
 import { MonitoringManager } from '@core/monitoring';
 import { ServiceRegistry } from '@core/registry';
 import { MessageRouter } from '@core/router';
@@ -12,7 +12,7 @@ import { SystemManager } from './system/manager';
 const logger = SetupLogger('MessageBroker');
 
 export class MessageBroker {
-    private wss: WebSocketServer;
+    private server: CombinedServer;
     private connectionManager: ConnectionManager;
     private messageRouter: MessageRouter;
     private monitorManager: MonitoringManager;
@@ -34,10 +34,9 @@ export class MessageBroker {
         this.serviceRegistry.assignConnectionManager(this.connectionManager);
         this.messageRouter.assignConnectionManager(this.connectionManager);
         this.messageRouter.assignServiceRegistry(this.serviceRegistry);
-        this.wss = createWebSocketServer(this.connectionManager);
+        this.server = createCombinedServer(this.connectionManager);
         this.createdAt = new Date();
         logger.info(`Created at ${this.createdAt.toISOString()}`);
-        logger.info(`Listening on ${config.host}:${config.port} (WebSocket)`);
     }
 
     /**
@@ -58,24 +57,20 @@ export class MessageBroker {
         // Close all connections
         await this.connectionManager.dispose();
 
-        // Stop the WebSocket server
-        await new Promise<void>((resolve, reject) => {
-            this.wss.close((err) => {
-                if (err) {
-                    logger.error('Error closing WebSocket server', { error: err });
-                    reject(err);
-                } else {
-                    logger.info('WebSocket server closed');
-                    resolve();
-                }
-            });
-        });
-
         // Dispose of system manager
         this.systemManager.dispose();
 
         // Dispose of monitoring manager
         this.monitorManager.dispose();
+
+        // Stop all servers
+        try {
+            await this.server.close();
+            logger.info('All servers closed');
+        } catch (error) {
+            logger.error('Error closing servers', { error });
+            throw error;
+        }
 
         logger.info('Shutdown complete.');
     }

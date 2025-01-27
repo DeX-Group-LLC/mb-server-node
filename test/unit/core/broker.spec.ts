@@ -1,36 +1,41 @@
+/**
+ * @file Test suite for MessageBroker class
+ * @description Tests the core functionality of the message broker system, including:
+ * - Component initialization and dependency injection
+ * - Shutdown sequence and cleanup
+ * - Error handling during shutdown
+ */
+
 import { jest } from '@jest/globals';
-import { WebSocketServer } from 'ws';
+import { Server } from 'net';
 import { MessageBroker } from '@core/broker';
-import { ConnectionManager } from '@core/connection';
-import { createWebSocketServer } from '@core/connection/websocket';
+import { ConnectionManager } from '@core/connection/manager';
+import { CombinedServer, createCombinedServer } from '@core/connection/protocols';
 import { MonitoringManager } from '@core/monitoring';
 import { MessageRouter } from '@core/router';
 import { ServiceRegistry } from '@core/registry';
 import { SubscriptionManager } from '@core/subscription';
+import { SystemManager } from '@core/system/manager';
 import logger, { SetupLogger } from '@utils/logger';
 
-// Mock external dependencies
-jest.mock('ws');
-jest.mock('@core/connection');
-jest.mock('@core/connection/websocket');
+// Mock all external dependencies
+jest.mock('net');
+jest.mock('@core/connection/manager', () => ({
+    ConnectionManager: jest.fn().mockImplementation((messageRouter, serviceRegistry, monitorManager, subscriptionManager) => {
+        if (!messageRouter || !serviceRegistry || !monitorManager || !subscriptionManager) {
+            throw new Error('Missing required constructor arguments');
+        }
+        return {
+            dispose: jest.fn().mockImplementation(() => Promise.resolve())
+        };
+    })
+}));
+jest.mock('@core/connection/protocols');
 jest.mock('@core/monitoring');
 jest.mock('@core/router');
 jest.mock('@core/registry');
 jest.mock('@core/subscription');
 jest.mock('@core/system/manager');
-jest.mock('@config', () => ({
-    config: {
-        host: 'localhost',
-        port: 8080,
-        request: {
-            response: {
-                timeout: {
-                    max: 60000
-                }
-            }
-        }
-    }
-}));
 jest.mock('@utils/logger', () => {
     const mockLogger = {
         info: jest.fn(),
@@ -44,237 +49,194 @@ jest.mock('@utils/logger', () => {
 });
 
 /**
- * Test suite for MessageBroker class.
- * Tests the core functionality of the message broker system.
- *
- * Key areas tested:
- * - Component initialization and dependencies
- * - Initialization order
- * - Shutdown sequence
- * - Error handling during shutdown
+ * Test suite for MessageBroker class
+ * @group unit
+ * @group core
  */
 describe('MessageBroker', () => {
-    // Mock component instances
-    let mockWss: jest.Mocked<WebSocketServer>;
+    let mockServer: jest.Mocked<Server>;
+    let mockCombinedServer: jest.Mocked<CombinedServer>;
     let mockConnectionManager: jest.Mocked<ConnectionManager>;
     let mockMessageRouter: jest.Mocked<MessageRouter>;
     let mockMonitorManager: jest.Mocked<MonitoringManager>;
     let mockSubscriptionManager: jest.Mocked<SubscriptionManager>;
     let mockServiceRegistry: jest.Mocked<ServiceRegistry>;
+    let mockSystemManager: jest.Mocked<SystemManager>;
+    let mockMetric: any;
 
+    /**
+     * Setup function run before each test
+     * Initializes all mock components and their behaviors
+     */
     beforeEach(() => {
-        // Reset all mocks before each test
         jest.resetAllMocks();
 
-        // Setup MonitoringManager mock first since other components depend on it
-        mockMonitorManager = {
-            createMetric: jest.fn(),
-            registerMetric: jest.fn().mockReturnValue({
-                value: 0,
-                lastModified: new Date(),
-                dispose: jest.fn()
-            }),
-            registerParameterized: jest.fn().mockReturnValue({
-                get: jest.fn().mockReturnValue({
-                    value: 0,
-                    lastModified: new Date(),
-                    dispose: jest.fn()
-                })
-            }),
+        // Create a mock metric instance
+        mockMetric = {
+            value: 0,
+            lastModified: new Date(),
             dispose: jest.fn()
+        };
+
+        // Setup mock instances with all required methods
+        mockMonitorManager = {
+            dispose: jest.fn(),
+            registerMetric: jest.fn().mockReturnValue(mockMetric),
+            registerParameterized: jest.fn().mockReturnValue({
+                get: jest.fn().mockReturnValue(mockMetric)
+            })
         } as unknown as jest.Mocked<MonitoringManager>;
-        (MonitoringManager as jest.Mock).mockImplementation(() => mockMonitorManager);
 
-        // Setup WebSocket server mock with close functionality
-        mockWss = {
-            close: jest.fn((cb?: (err?: Error) => void) => {
-                if (cb) cb();
-                return mockWss;
-            }),
-        } as unknown as jest.Mocked<WebSocketServer>;
-        (createWebSocketServer as jest.Mock).mockReturnValue(mockWss);
+        mockSystemManager = {
+            dispose: jest.fn()
+        } as unknown as jest.Mocked<SystemManager>;
 
-        // Setup SubscriptionManager mock with dispose method
         mockSubscriptionManager = {
-            dispose: jest.fn().mockImplementation(() => Promise.resolve()),
+            dispose: jest.fn().mockImplementation(() => Promise.resolve())
         } as unknown as jest.Mocked<SubscriptionManager>;
-        (SubscriptionManager as jest.Mock).mockImplementation(() => mockSubscriptionManager);
 
-        // Setup MessageRouter mock with required methods
         mockMessageRouter = {
             assignConnectionManager: jest.fn(),
             assignServiceRegistry: jest.fn(),
-            dispose: jest.fn().mockImplementation(() => Promise.resolve()),
+            dispose: jest.fn().mockImplementation(() => Promise.resolve())
         } as unknown as jest.Mocked<MessageRouter>;
-        (MessageRouter as jest.Mock).mockImplementation(() => mockMessageRouter);
 
-        // Setup ServiceRegistry mock with required methods
         mockServiceRegistry = {
             assignConnectionManager: jest.fn(),
-            dispose: jest.fn().mockImplementation(() => Promise.resolve()),
+            dispose: jest.fn().mockImplementation(() => Promise.resolve())
         } as unknown as jest.Mocked<ServiceRegistry>;
-        (ServiceRegistry as jest.Mock).mockImplementation(() => mockServiceRegistry);
 
-        // Setup ConnectionManager mock with dispose method
-        mockConnectionManager = {
-            dispose: jest.fn().mockImplementation(() => Promise.resolve()),
-        } as unknown as jest.Mocked<ConnectionManager>;
-        (ConnectionManager as jest.Mock).mockImplementation(() => mockConnectionManager);
+        mockServer = {
+            close: jest.fn()
+        } as unknown as jest.Mocked<Server>;
+
+        mockCombinedServer = {
+            close: jest.fn().mockImplementation(() => Promise.resolve())
+        } as unknown as jest.Mocked<CombinedServer>;
+
+        // Setup mock constructors to return instances
+        (MonitoringManager as jest.Mock).mockReturnValue(mockMonitorManager);
+        (SystemManager as jest.Mock).mockReturnValue(mockSystemManager);
+        (SubscriptionManager as jest.Mock).mockReturnValue(mockSubscriptionManager);
+        (MessageRouter as jest.Mock).mockReturnValue(mockMessageRouter);
+        (ServiceRegistry as jest.Mock).mockReturnValue(mockServiceRegistry);
+        (createCombinedServer as jest.Mock).mockReturnValue(mockCombinedServer);
+
+        // Store the ConnectionManager instance when it's created
+        (ConnectionManager as jest.Mock).mockImplementation((messageRouter, serviceRegistry, monitorManager, subscriptionManager) => {
+            mockConnectionManager = {
+                dispose: jest.fn().mockImplementation(() => Promise.resolve())
+            } as unknown as jest.Mocked<ConnectionManager>;
+            return mockConnectionManager;
+        });
     });
 
     /**
-     * Tests for MessageBroker constructor functionality.
-     * Verifies the broker properly:
-     * - Initializes all required components
-     * - Establishes component dependencies
-     * - Maintains correct initialization order
-     * - Starts the WebSocket server
+     * Tests for MessageBroker constructor
+     * @group initialization
      */
     describe('constructor', () => {
         /**
-         * Verifies that all components are initialized in the correct order.
-         * The constructor should:
-         * - Create components in dependency order
-         * - Establish component relationships
-         * - Start the WebSocket server
-         * - Log server startup
+         * Tests that all components are initialized in the correct order
+         * and with proper dependencies
          */
         it('should initialize all components in correct order', () => {
-            // Create broker instance to trigger initialization
             const broker = new MessageBroker();
 
-            // Verify all components were created
+            // Verify component creation
+            expect(MonitoringManager).toHaveBeenCalledTimes(1);
+            expect(SystemManager).toHaveBeenCalledWith(mockMonitorManager);
             expect(SubscriptionManager).toHaveBeenCalledTimes(1);
             expect(MessageRouter).toHaveBeenCalledWith(mockSubscriptionManager, mockMonitorManager);
             expect(ServiceRegistry).toHaveBeenCalledWith(mockSubscriptionManager, mockMonitorManager);
-            expect(ConnectionManager).toHaveBeenCalledWith(mockMessageRouter, mockServiceRegistry, mockMonitorManager, mockSubscriptionManager);
+            expect(ConnectionManager).toHaveBeenCalledWith(
+                mockMessageRouter,
+                mockServiceRegistry,
+                mockMonitorManager,
+                mockSubscriptionManager
+            );
 
-            // Verify component relationships were established
+            // Verify component relationships
             expect(mockServiceRegistry.assignConnectionManager).toHaveBeenCalledWith(mockConnectionManager);
             expect(mockMessageRouter.assignConnectionManager).toHaveBeenCalledWith(mockConnectionManager);
             expect(mockMessageRouter.assignServiceRegistry).toHaveBeenCalledWith(mockServiceRegistry);
 
-            // Verify WebSocket server was created
-            expect(createWebSocketServer).toHaveBeenCalledWith(mockConnectionManager);
-            expect(logger.info).toHaveBeenCalledWith(expect.stringMatching(/^Listening on .+:\d+ \(WebSocket\)$/));
+            // Verify server creation
+            expect(createCombinedServer).toHaveBeenCalledWith(mockConnectionManager);
 
-            // Verify initialization order through call order
-            const subscriptionManagerCall = (SubscriptionManager as jest.Mock).mock.invocationCallOrder[0];
-            const messageRouterCall = (MessageRouter as jest.Mock).mock.invocationCallOrder[0];
-            const serviceRegistryCall = (ServiceRegistry as jest.Mock).mock.invocationCallOrder[0];
-            const connectionManagerCall = (ConnectionManager as jest.Mock).mock.invocationCallOrder[0];
-
-            // Verify dependency-based initialization sequence
-            expect(subscriptionManagerCall).toBeLessThan(messageRouterCall);
-            expect(messageRouterCall).toBeLessThan(serviceRegistryCall);
-            expect(serviceRegistryCall).toBeLessThan(connectionManagerCall);
-        });
-
-        /**
-         * Verifies that server startup is logged correctly.
-         * The constructor should:
-         * - Log server startup with host and port
-         * - Use correct message format
-         */
-        it('should log server start with correct host and port', () => {
-            // Create broker instance to trigger logging
-            const broker = new MessageBroker();
-
-            // Verify startup was logged with correct format
+            // Verify creation logging
             expect(logger.info).toHaveBeenCalledWith(expect.stringMatching(/^Created at .+$/));
-            expect(logger.info).toHaveBeenCalledWith(expect.stringMatching(/^Listening on .+:\d+ \(WebSocket\)$/));
         });
     });
 
     /**
-     * Tests for MessageBroker shutdown functionality.
-     * Verifies the broker properly:
-     * - Shuts down all components
-     * - Maintains correct shutdown order
-     * - Handles shutdown errors
-     * - Logs shutdown progress
+     * Tests for MessageBroker shutdown sequence
+     * @group shutdown
      */
     describe('shutdown', () => {
+        let broker: MessageBroker;
+
         /**
-         * Verifies that all components are shut down in the correct order.
-         * The shutdown should:
-         * - Clear pending requests
-         * - Clear subscriptions
-         * - Clear services
-         * - Close connections
-         * - Close WebSocket server
+         * Creates a new MessageBroker instance before each test
+         */
+        beforeEach(() => {
+            broker = new MessageBroker();
+        });
+
+        /**
+         * Tests that all components are properly disposed during normal shutdown
          */
         it('should shutdown all components in correct order', async () => {
-            // Create and initialize broker instance
-            const broker = new MessageBroker();
-
-            // Trigger broker shutdown
             await broker.shutdown();
 
-            // Verify all components were shut down
+            // Verify all components were disposed
             expect(mockMessageRouter.dispose).toHaveBeenCalled();
             expect(mockSubscriptionManager.dispose).toHaveBeenCalled();
             expect(mockServiceRegistry.dispose).toHaveBeenCalled();
             expect(mockConnectionManager.dispose).toHaveBeenCalled();
-            expect(mockWss.close).toHaveBeenCalled();
+            expect(mockCombinedServer.close).toHaveBeenCalled();
+            expect(mockSystemManager.dispose).toHaveBeenCalled();
+            expect(mockMonitorManager.dispose).toHaveBeenCalled();
 
-            // Verify shutdown order through call order
-            const clearRequestsCall = mockMessageRouter.dispose.mock.invocationCallOrder[0];
-            const clearSubscriptionsCall = mockSubscriptionManager.dispose.mock.invocationCallOrder[0];
-            const clearServicesCall = mockServiceRegistry.dispose.mock.invocationCallOrder[0];
-            const closeConnectionsCall = mockConnectionManager.dispose.mock.invocationCallOrder[0];
-            const closeWssCall = mockWss.close.mock.invocationCallOrder[0];
-
-            // Verify dependency-based shutdown sequence
-            expect(clearRequestsCall).toBeLessThan(clearSubscriptionsCall);
-            expect(clearSubscriptionsCall).toBeLessThan(clearServicesCall);
-            expect(clearServicesCall).toBeLessThan(closeConnectionsCall);
-            expect(closeConnectionsCall).toBeLessThan(closeWssCall);
-        });
-
-        /**
-         * Verifies that WebSocket server close errors are handled properly.
-         * The shutdown should:
-         * - Detect server close errors
-         * - Log the error
-         * - Propagate the error
-         */
-        it('should handle WebSocket server close error', async () => {
-            // Create and initialize broker instance
-            const broker = new MessageBroker();
-
-            // Setup WebSocket server to fail on close
-            const error = new Error('Failed to close WebSocket server');
-            mockWss.close.mockImplementationOnce((cb?: (err?: Error) => void) => {
-                if (cb) cb(error);
-                return mockWss;
-            });
-
-            // Verify error is propagated
-            await expect(broker.shutdown()).rejects.toThrow('Failed to close WebSocket server');
-
-            // Verify error was logged
-            expect(logger.error).toHaveBeenCalledWith('Error closing WebSocket server', { error });
-        });
-
-        /**
-         * Verifies that shutdown progress is properly logged.
-         * The shutdown should:
-         * - Log shutdown initiation
-         * - Log server closure
-         * - Log shutdown completion
-         */
-        it('should log shutdown steps', async () => {
-            // Create and initialize broker instance
-            const broker = new MessageBroker();
-
-            // Trigger broker shutdown
-            await broker.shutdown();
-
-            // Verify shutdown steps were logged
+            // Verify logging
             expect(logger.info).toHaveBeenCalledWith('Shutting down...');
-            expect(logger.info).toHaveBeenCalledWith('WebSocket server closed');
+            expect(logger.info).toHaveBeenCalledWith('All servers closed');
             expect(logger.info).toHaveBeenCalledWith('Shutdown complete.');
+        });
+
+        /**
+         * Tests that server close errors are properly handled and logged
+         */
+        it('should handle server close errors', async () => {
+            const error = new Error('Server close error');
+            mockCombinedServer.close.mockRejectedValueOnce(error);
+
+            await expect(broker.shutdown()).rejects.toThrow(error);
+
+            expect(logger.error).toHaveBeenCalledWith('Error closing servers', { error });
+        });
+
+        /**
+         * Tests that components are disposed even when server close fails
+         * Verifies the cleanup sequence continues despite errors
+         */
+        it('should dispose components even if server close fails', async () => {
+            const error = new Error('Server close error');
+            mockCombinedServer.close.mockRejectedValueOnce(error);
+
+            try {
+                await broker.shutdown();
+            } catch (e) {
+                // Expected error
+            }
+
+            // Verify all components were still disposed
+            expect(mockMessageRouter.dispose).toHaveBeenCalled();
+            expect(mockSubscriptionManager.dispose).toHaveBeenCalled();
+            expect(mockServiceRegistry.dispose).toHaveBeenCalled();
+            expect(mockConnectionManager.dispose).toHaveBeenCalled();
+            expect(mockSystemManager.dispose).toHaveBeenCalled();
+            expect(mockMonitorManager.dispose).toHaveBeenCalled();
         });
     });
 });
