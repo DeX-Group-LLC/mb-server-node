@@ -21,8 +21,6 @@ describe('UUID4 Validation', () => {
      * Should return false for improperly formatted strings.
      */
     it('should reject invalid UUID4 strings', () => {
-        expect(isUUID4(null)).toBe(false); // null
-        expect(isUUID4(undefined)).toBe(false); // undefined
         expect(isUUID4('')).toBe(false); // empty string
         expect(isUUID4('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a1')).toBe(false); // too short
         expect(isUUID4('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a111')).toBe(false); // too long

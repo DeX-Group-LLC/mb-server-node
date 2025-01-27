@@ -55,7 +55,7 @@ export class WebSocketConnection implements Connection {
  */
 export function createWebSocketServer(connectionManager: ConnectionManager): WebSocketServer {
     let wss: WebSocketServer;
-    if (config.ssl?.key && config.ssl?.cert) {
+    if (config.ssl && config.ssl.key && config.ssl.cert) {
         logger.info('SSL is enabled');
         const key = fs.readFileSync(config.ssl.key);
         const cert = fs.readFileSync(config.ssl.cert);

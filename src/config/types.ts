@@ -4,7 +4,7 @@
 export interface Config {
     port: number;
     host: string;
-    ssl: {
+    ssl?: {
         key?: string;
         cert?: string;
     };
