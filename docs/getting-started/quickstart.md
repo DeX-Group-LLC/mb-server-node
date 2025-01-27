@@ -1,102 +1,86 @@
 # Quick Start Guide
 
-This guide helps you get started with MB Server Node quickly.
+This guide will help you get started with using MB Server Node.
 
-## Basic Usage
+## Starting the Server
 
-### 1. Start the Server
+1. If you haven't already, follow the [Installation Guide](./installation.md)
 
-If installed from source:
+2. Start the server:
 ```bash
+# Development mode
+npm run dev
+
+# Production mode
 npm start
 ```
 
-The server will start with default configuration:
-- WebSocket port: 8080
-- TCP Socket port: 8081
-- Monitoring port: 9090
+3. Verify the server is running:
+   - WebSocket endpoint: `ws://localhost:8080` (or `wss://` if SSL is enabled)
+   - TCP Socket endpoint: `localhost:8081`
 
-### 2. Basic JavaScript Client Example
+## Basic Usage Example
 
-```javascript
-const WebSocket = require('ws');
-
-// Connect to MB Server
-const ws = new WebSocket('ws://localhost:8080');
-
-// Handle connection
-ws.on('open', () => {
-  console.log('Connected to MB Server');
-
-  // Subscribe to a topic
-  const subscribeMsg = 'SUBSCRIBE:example.topic:1.0:req1\n{}';
-  ws.send(subscribeMsg);
-
-  // Publish a message
-  const publishMsg = 'PUBLISH:example.topic:1.0:req2\n{"message": "Hello World"}';
-  ws.send(publishMsg);
-});
-
-// Handle messages
-ws.on('message', (data) => {
-  console.log('Received:', data.toString());
-});
-
-// Handle errors
-ws.on('error', console.error);
-```
-
-### 3. Basic TCP Socket Example
+Here's a simple example using the JavaScript client:
 
 ```javascript
-const net = require('net');
+import { MessageBrokerClient } from '@mb/client';
 
-// Connect to MB Server
-const client = new net.Socket();
-client.connect(8081, 'localhost', () => {
-  console.log('Connected to MB Server');
+async function main() {
+    // Create client instance
+    const client = new MessageBrokerClient({
+        protocol: 'ws',
+        reconnect: true
+    });
 
-  // Subscribe to a topic
-  const subscribeMsg = 'SUBSCRIBE:example.topic:1.0:req1\n{}';
-  client.write(subscribeMsg);
+    try {
+        // Connect to broker
+        await client.connect('ws://localhost:8080');
 
-  // Publish a message
-  const publishMsg = 'PUBLISH:example.topic:1.0:req2\n{"message": "Hello World"}';
-  client.write(publishMsg);
-});
+        // Subscribe to a topic
+        await client.subscribe('example.topic');
 
-// Handle data
-client.on('data', (data) => {
-  console.log('Received:', data.toString());
-});
+        // Handle incoming messages
+        client.on('message', (header, payload) => {
+            console.log(`Received message on topic: ${header.topic}`);
+            console.log('Payload:', payload);
+        });
 
-// Handle errors
-client.on('error', console.error);
+        // Publish a message
+        await client.publish('example.topic', {
+            message: 'Hello, World!',
+            timestamp: new Date().toISOString()
+        });
+
+    } catch (error) {
+        console.error('Error:', error);
+    }
+}
+
+main();
 ```
 
-## Message Types
+## Basic Configuration
 
-### 1. Publish/Subscribe
-```javascript
-// Subscribe
-'SUBSCRIBE:my.topic:1.0:req1\n{}'
+The server can be configured through environment variables or a configuration file:
 
-// Publish
-'PUBLISH:my.topic:1.0:req2\n{"data": "value"}'
+```env
+# Basic server configuration
+WEBSOCKET_PORT=8080
+TCP_PORT=8081
+HOST=localhost
+
+# SSL/TLS Configuration (optional)
+SSL_KEY=./certs/server.key
+SSL_CERT=./certs/server.crt
 ```
 
-### 2. Request/Response
-```javascript
-// Request
-'REQUEST:service.name:1.0:req3\n{"action": "getData"}'
-
-// Response
-'RESPONSE:service.name:1.0:req3\n{"result": "success"}'
-```
+For more detailed configuration options, see the [Configuration Guide](./configuration.md).
 
 ## Next Steps
 
-1. Learn about [Message Format](../message-format/structure.md)
-2. Explore [Protocol Options](../protocols/README.md)
-3. Configure [Security Settings](../operations/security.md)
-4. Set up [Monitoring](../operations/monitoring.md)
+1. Learn about [Core Concepts](./concepts.md)
+2. Explore the [API Documentation](../api/) for your preferred language
+3. Read the [Protocol Documentation](../protocols/) for protocol details
+4. Review [Security Best Practices](../security.md)
+5. See [Examples](../examples/) for more usage scenarios

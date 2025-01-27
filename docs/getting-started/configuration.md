@@ -1,154 +1,83 @@
 # Configuration Guide
 
-This guide details all available configuration options for MB Server Node.
+This document details all configuration options available in MB Server Node.
 
 ## Configuration Methods
 
-Configuration can be provided through:
+MB Server Node can be configured through:
 1. Environment variables
-2. Configuration file (YAML)
-3. Command line arguments
+2. Configuration file (`.env` or `config.yaml`)
+3. Command-line arguments
 
-## Configuration Parameters
+Priority order (highest to lowest):
+1. Command-line arguments
+2. Environment variables
+3. Configuration file
+4. Default values
 
-### Server Configuration
-```yaml
-# Network settings
-ports:
-  websocket: 3000  # WebSocket server port
-  tcp: 3001        # TCP Socket server port
-host: 'localhost'   # Server host binding
+## Server Configuration
 
-# SSL/TLS Configuration (Optional)
-ssl:
-  key: '/path/to/key.pem'    # SSL private key path
-  cert: '/path/to/cert.pem'  # SSL certificate path
+### Network Settings
 
-# Logging Configuration
-logging:
-  level: 'info'   # Log level (debug, info, warn, error)
-  format: 'json'  # Log format (json, text)
+```env
+# WebSocket server configuration
+WEBSOCKET_PORT=8080        # WebSocket server port
+TCP_PORT=8081             # TCP server port
+HOST=localhost             # Host to bind to
 ```
 
-### Authentication Configuration
-```yaml
-auth:
-  failure:
-    lockout:
-      threshold: 5   # Number of failures before lockout
-      duration: 60   # Lockout duration in seconds
+### SSL/TLS Configuration
+
+```env
+# SSL/TLS settings
+SSL_KEY=./certs/key.pem    # Path to SSL key file
+SSL_CERT=./certs/cert.pem  # Path to SSL certificate file
+```
+
+### Authentication & Authorization
+
+```env
+# Authentication configuration
+AUTH_FAILURE_LOCKOUT_THRESHOLD=5   # Failed attempts before lockout
+AUTH_FAILURE_LOCKOUT_DURATION=60   # Lockout duration in seconds
 ```
 
 ### Rate Limiting
-```yaml
-rate:
-  limit:
-    global:
-      per:
-        service: 0    # Global per-service rate limit (0 = unlimited)
-        topic: 0      # Global per-topic rate limit (0 = unlimited)
-    topic:
-      per:
-        service: {}   # Per-topic rate limits for services
+
+```env
+# Rate limiting configuration
+RATE_LIMIT_GLOBAL_PER_SERVICE=1000    # Global rate limit per service
+RATE_LIMIT_GLOBAL_PER_TOPIC=1000      # Global rate limit per topic
 ```
 
 ### Connection Management
-```yaml
-connection:
-  max:
-    concurrent: 100   # Maximum concurrent connections
-  heartbeatRetryTimeout: 30000        # Heartbeat retry timeout (ms)
-  heartbeatDeregisterTimeout: 60000   # Service deregister timeout (ms)
+
+```env
+# Connection configuration
+CONNECTION_MAX_CONCURRENT=1000       # Maximum concurrent connections
 ```
 
-### Request Handling
-```yaml
-request:
-  response:
-    timeout:
-      default: 5000    # Default request timeout (ms)
-      max: 3600000     # Maximum allowed timeout (ms)
+### Request Configuration
 
-max:
-  outstanding:
-    requests: 10000    # Maximum pending requests
+```env
+# Request configuration
+REQUEST_RESPONSE_TIMEOUT_DEFAULT=5000    # Default request timeout (ms)
+REQUEST_RESPONSE_TIMEOUT_MAX=3600000     # Maximum request timeout (ms)
+MAX_OUTSTANDING_REQUESTS=10000           # Maximum pending requests
 ```
 
-### Message Configuration
-```yaml
-message:
-  payload:
-    maxLength: 16384   # Maximum payload size in bytes
-```
+## Configuration File Format
 
-### Monitoring Configuration
-```yaml
-monitoring:
-  interval: 60000      # Metrics collection interval (ms)
-```
-
-## Environment Variables
-
-Each configuration parameter can be set via environment variables using the following format:
-- Convert path to uppercase
-- Replace dots with underscores
-- Prefix with `MB_`
-
-Examples:
-```bash
-# Server Configuration
-MB_PORTS_WEBSOCKET=3000
-MB_PORTS_TCP=3001
-MB_HOST=localhost
-
-# SSL Configuration
-MB_SSL_KEY=/path/to/key.pem
-MB_SSL_CERT=/path/to/cert.pem
-
-# Logging Configuration
-MB_LOGGING_LEVEL=info
-MB_LOGGING_FORMAT=json
-
-# Authentication Configuration
-MB_AUTH_FAILURE_LOCKOUT_THRESHOLD=5
-MB_AUTH_FAILURE_LOCKOUT_DURATION=60
-
-# Rate Limiting
-MB_RATE_LIMIT_GLOBAL_PER_SERVICE=0
-MB_RATE_LIMIT_GLOBAL_PER_TOPIC=0
-
-# Connection Management
-MB_CONNECTION_MAX_CONCURRENT=100
-MB_CONNECTION_HEARTBEAT_RETRY_TIMEOUT=30000
-MB_CONNECTION_HEARTBEAT_DEREGISTER_TIMEOUT=60000
-
-# Request Configuration
-MB_REQUEST_RESPONSE_TIMEOUT_DEFAULT=5000
-MB_REQUEST_RESPONSE_TIMEOUT_MAX=3600000
-MB_MAX_OUTSTANDING_REQUESTS=10000
-
-# Message Configuration
-MB_MESSAGE_PAYLOAD_MAX_LENGTH=16384
-
-# Monitoring Configuration
-MB_MONITORING_INTERVAL=60000
-```
-
-## Configuration File
-
-Create a `config.yaml` file:
+### YAML Configuration
 
 ```yaml
 ports:
-  websocket: 3000
-  tcp: 3001
+  websocket: 8080
+  tcp: 8081
 host: 'localhost'
 ssl:
-  key: '/path/to/key.pem'
-  cert: '/path/to/cert.pem'
-logging:
-  level: 'info'
-  format: 'json'
+  key: './certs/key.pem'
+  cert: './certs/cert.pem'
 auth:
   failure:
     lockout:
@@ -158,16 +87,11 @@ rate:
   limit:
     global:
       per:
-        service: 0
-        topic: 0
-    topic:
-      per:
-        service: {}
+        service: 1000
+        topic: 1000
 connection:
   max:
-    concurrent: 100
-  heartbeatRetryTimeout: 30000
-  heartbeatDeregisterTimeout: 60000
+    concurrent: 1000
 request:
   response:
     timeout:
@@ -176,35 +100,112 @@ request:
 max:
   outstanding:
     requests: 10000
-message:
-  payload:
-    maxLength: 16384
-monitoring:
-  interval: 60000
+```
+
+## Command-line Arguments
+
+```bash
+mb-server [options]
+
+Options:
+  -c, --config <path>     Path to configuration file
+  -p, --ws-port <port>    WebSocket port (default: 8080)
+  -t, --tcp-port <port>   TCP port (default: 8081)
+  -h, --host <host>       Host to bind to (default: 0.0.0.0)
+  --ssl-key <path>        Path to SSL private key
+  --ssl-cert <path>       Path to SSL certificate
+  -v, --version          Show version information
+  --help                 Show this help message
+```
+
+## Environment Variables Reference
+
+### Server Settings
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `WEBSOCKET_PORT` | number | `8080` | WebSocket server port |
+| `TCP_PORT` | number | `8081` | TCP server port |
+| `HOST` | string | `0.0.0.0` | Server host |
+
+### SSL/TLS Settings
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `SSL_KEY` | string | - | Path to SSL private key |
+| `SSL_CERT` | string | - | Path to SSL certificate |
+
+### Authentication Settings
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `AUTH_FAILURE_LOCKOUT_THRESHOLD` | number | `5` | Failed attempts before lockout |
+| `AUTH_FAILURE_LOCKOUT_DURATION` | number | `60` | Lockout duration in seconds |
+
+### Rate Limiting Settings
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `RATE_LIMIT_GLOBAL_PER_SERVICE` | number | `1000` | Global rate limit per service |
+| `RATE_LIMIT_GLOBAL_PER_TOPIC` | number | `1000` | Global rate limit per topic |
+
+### Connection Settings
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `CONNECTION_MAX_CONCURRENT` | number | `1000` | Maximum concurrent connections |
+
+### Request Settings
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `REQUEST_RESPONSE_TIMEOUT_DEFAULT` | number | `5000` | Default request timeout (ms) |
+| `REQUEST_RESPONSE_TIMEOUT_MAX` | number | `3600000` | Maximum request timeout (ms) |
+| `MAX_OUTSTANDING_REQUESTS` | number | `10000` | Maximum pending requests |
+
+## Usage Examples
+
+### Using Environment Variables
+
+```bash
+# Basic setup
+export WEBSOCKET_PORT=8080
+export TCP_PORT=8081
+export HOST=0.0.0.0
+
+# Start the server
+npm start
+```
+
+### Using Configuration File
+
+```bash
+# Start with custom config
+CONFIG_PATH=/path/to/config.yaml npm start
 ```
 
 ## Best Practices
 
-1. **Security**
-   - Always use SSL/TLS in production
+1. **Production Settings**
+   - Use SSL/TLS in production
    - Set appropriate rate limits
+   - Configure proper logging
+   - Enable monitoring
+
+2. **Development Settings**
+   - Use debug logging
+   - Disable rate limits
+   - Use pretty log format
+   - Enable shorter timeouts
+
+3. **Security Settings**
    - Configure authentication
-   - Limit maximum connections
+   - Set reasonable rate limits
+   - Enable SSL/TLS
+   - Set proper timeouts
 
-2. **Performance**
-   - Adjust timeouts based on network
-   - Set appropriate message size limits
-   - Configure monitoring interval
-   - Tune connection parameters
-
-3. **Monitoring**
-   - Enable JSON logging in production
-   - Set appropriate log levels
-   - Configure metrics collection
-   - Monitor connection limits
-
-4. **Development**
-   - Use debug logging in development
-   - Set shorter timeouts for testing
-   - Use text logging for readability
-   - Enable detailed error messages
+4. **Performance Tuning**
+   - Adjust concurrent connections
+   - Configure message size limits
+   - Set appropriate timeouts
+   - Monitor metrics

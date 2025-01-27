@@ -1,254 +1,182 @@
 # TCP Socket Protocol
 
-This document details the TCP Socket protocol implementation in MB Server Node.
+This document describes the TCP Socket protocol implementation in MB Server Node.
 
-## Connection Details
+## Overview
 
-### Connection Format
-```
-hostname:port
-```
+The TCP Socket protocol provides a simple, efficient connection for services that don't require browser support. It uses a basic message framing format with a 4-byte length prefix.
 
-### Connection Flow
-```
-Client                    Server
-  |                         |
-  |  TCP SYN               |
-  |----------------------->|
-  |                         |
-  |  TCP SYN-ACK           |
-  |<-----------------------|
-  |                         |
-  |  Protocol Handshake     |
-  |<======================>|
+## Connection
+
+Default port: 8081 (configurable via `TCP_PORT`)
+
+```javascript
+const net = require('net');
+const client = new net.Socket();
+client.connect(8081, 'localhost');
 ```
 
-## Features
+## Message Framing
 
-### Core Capabilities
-- Direct TCP communication
-- Custom binary framing
-- Manual connection management
-- High performance
-- Low overhead
+Each message is framed with a 4-byte length prefix:
 
-### Message Format
 ```
-[Length: 4 bytes][Flags: 4 bytes]
-Header\n
-JSON Payload
+[Length (4 bytes)][Message]
 ```
 
-## Implementation
+- **Length**: 32-bit unsigned integer in network byte order (big-endian)
+- **Message**: UTF-8 encoded text in MB Server Node message format
 
-### Dependencies
-```typescript
-import { createServer, Socket } from 'net';
+### Example Frame
+
+```javascript
+// Message: "publish:topic:1.0:123\n{}"
+// Length: 24 bytes
+
+const message = 'publish:topic:1.0:123\n{}';
+const length = Buffer.alloc(4);
+length.writeUInt32BE(message.length);
+
+socket.write(Buffer.concat([
+    length,
+    Buffer.from(message)
+]));
 ```
 
-### Server Setup
-```typescript
-const server = createServer((socket) => {
-    // Handle new connection
+## Message Format
+
+Messages use the standard MB Server Node format:
+
+```
+action:topic:version:requestId[:parentId][:timeout]\n{"key": "value"}
+```
+
+Example messages:
+
+```javascript
+// Subscribe
+'subscribe:events.user.*:1.0:123e4567-e89b-12d3-a456-426614174000\n{}'
+
+// Publish
+'publish:events.user.created:1.0:987fcdeb-51a2-43fe-ba98-765432198765\n{"data": "value"}'
+
+// Request
+'request:user.profile.get:1.0:def456ghi-7890-12ab-cdef-456789abcdef\n{"action": "getData"}'
+
+// Response
+'response:user.profile.get:1.0:abc123def-4567-89ab-cdef-123456789abc:def456ghi-7890-12ab-cdef-456789abcdef\n{"result": "success"}'
+```
+
+## Reading Messages
+
+To read messages:
+
+1. Read 4 bytes for length
+2. Read that many bytes for message
+3. Parse message as UTF-8 text
+
+```javascript
+let lengthBuffer = Buffer.alloc(4);
+socket.read(4, (err, bytes) => {
+    if (err) throw err;
+    const length = lengthBuffer.readUInt32BE();
+
+    socket.read(length, (err, messageBuffer) => {
+        if (err) throw err;
+        const message = messageBuffer.toString('utf8');
+        // Process message
+    });
 });
-
-server.listen(8081, '0.0.0.0', () => {
-    console.log('TCP server listening on port 8081');
-});
 ```
 
-### Connection Handling
-```typescript
-class TCPConnection {
-    private socket: Socket;
-    private buffer: Buffer;
-    private expectedLength: number;
+## Limitations
 
-    constructor(socket: Socket) {
-        this.socket = socket;
-        this.buffer = Buffer.alloc(0);
-        this.expectedLength = 0;
-
-        socket.on('data', this.handleData.bind(this));
-        socket.on('close', this.handleClose.bind(this));
-        socket.on('error', this.handleError.bind(this));
-    }
-
-    private handleData(data: Buffer): void {
-        this.buffer = Buffer.concat([this.buffer, data]);
-        this.processBuffer();
-    }
-
-    private processBuffer(): void {
-        // Process complete messages
-        while (this.buffer.length >= 8) {
-            if (this.expectedLength === 0) {
-                // Read message length
-                this.expectedLength = this.buffer.readUInt32BE(0);
-
-                // Validate length
-                if (this.expectedLength > MAX_MESSAGE_SIZE) {
-                    this.socket.destroy(new Error('Message too large'));
-                    return;
-                }
-            }
-
-            // Check if complete message received
-            if (this.buffer.length >= this.expectedLength + 8) {
-                const message = this.buffer.slice(8, this.expectedLength + 8);
-                this.handleMessage(message);
-
-                // Remove processed message from buffer
-                this.buffer = this.buffer.slice(this.expectedLength + 8);
-                this.expectedLength = 0;
-            } else {
-                break;
-            }
-        }
-    }
-}
-```
-
-### Message Framing
-- 4-byte length prefix (big-endian)
-- 4-byte flags field
-- Maximum message size: 1MB (configurable)
-- Manual fragmentation handling
-- Binary message support
-
-## Performance Considerations
-
-### Advantages
-- Minimal protocol overhead
-- Direct socket access
-- Custom optimization
-- Binary efficiency
-
-### Overhead
-- Custom frame headers (8 bytes)
-- Manual fragmentation
-- Keep-alive frames
-- Protocol handling
-
-## Security
-
-### Transport Security
-- TLS encryption
-- Certificate validation
-- Custom protocols
-- Direct control
-
-### Network Security
-- Firewall rules
-- Port restrictions
-- Network isolation
-- Access control
-
-## Configuration Options
-
-### Server Configuration
-```typescript
-{
-    port: 8081,
-    host: '0.0.0.0',
-    backlog: 1024,
-    keepAlive: true,
-    keepAliveInitialDelay: 60000,
-    noDelay: true
-}
-```
-
-### SSL/TLS Options
-```typescript
-{
-    cert: fs.readFileSync('server.crt'),
-    key: fs.readFileSync('server.key'),
-    ca: fs.readFileSync('ca.crt'),
-    rejectUnauthorized: true,
-    minVersion: 'TLSv1.2'
-}
-```
+1. **Text Only**: Only supports UTF-8 encoded text messages. No binary payload support.
+2. **Simple Framing**: Uses only message length, no additional framing flags or options.
+3. **Maximum Size**: Messages limited to maximum payload length (configurable via `MAX_MESSAGE_PAYLOAD_LENGTH`).
 
 ## Error Handling
 
-### Common Errors
-1. Connection Failed
-   ```
-   Error: ECONNREFUSED
-   ```
+1. **Invalid Length**
+   - Length prefix must be a valid 32-bit unsigned integer
+   - Must match actual message length
+   - Must not exceed maximum message size
 
-2. Connection Reset
-   ```
-   Error: ECONNRESET
-   ```
+2. **Invalid Message**
+   - Must be valid UTF-8 text
+   - Must follow MB Server Node message format
+   - Must contain valid JSON payload
 
-3. Invalid Frame
-   ```
-   Error: Invalid message frame
-   ```
+3. **Connection Errors**
+   - Handle connection drops
+   - Implement reconnection logic
+   - Monitor connection state
 
-### Error Recovery
-```typescript
-socket.on('error', (error) => {
-    if (error.code === 'ECONNRESET') {
-        // Handle connection reset
-    } else if (error.code === 'ETIMEDOUT') {
-        // Handle timeout
+## Example Implementation
+
+```javascript
+const net = require('net');
+
+class TCPClient {
+    constructor(host = 'localhost', port = 8081) {
+        this.socket = new net.Socket();
+        this.host = host;
+        this.port = port;
     }
-});
 
-socket.on('close', (hadError) => {
-    if (hadError) {
-        // Handle error closure
+    connect() {
+        return new Promise((resolve, reject) => {
+            this.socket.connect(this.port, this.host, () => {
+                resolve();
+            });
+            this.socket.on('error', reject);
+        });
     }
-    // Attempt reconnection
-});
+
+    send(message) {
+        const length = Buffer.alloc(4);
+        length.writeUInt32BE(message.length);
+
+        this.socket.write(Buffer.concat([
+            length,
+            Buffer.from(message)
+        ]));
+    }
+
+    subscribe(topic) {
+        const message = `subscribe:${topic}:1.0:${this.generateUUID()}\n{}`;
+        this.send(message);
+    }
+
+    publish(topic, data) {
+        const message = `publish:${topic}:1.0:${this.generateUUID()}\n${JSON.stringify(data)}`;
+        this.send(message);
+    }
+
+    generateUUID() {
+        // Implementation of UUID generation
+    }
+}
 ```
 
 ## Best Practices
 
 1. **Connection Management**
-   - Implement keep-alive mechanism
-   - Handle reconnection manually
-   - Clean up resources properly
-   - Monitor socket state
+   - Implement connection timeouts
+   - Handle reconnection gracefully
+   - Monitor connection health
 
-2. **Performance**
-   - Enable TCP_NODELAY
-   - Use appropriate buffer sizes
-   - Batch small messages
-   - Monitor throughput
+2. **Message Handling**
+   - Validate message length
+   - Handle partial reads
+   - Implement message queuing
 
-3. **Security**
-   - Always use TLS in production
-   - Validate certificates
-   - Implement authentication
-   - Set appropriate timeouts
+3. **Error Handling**
+   - Handle network errors
+   - Validate message format
+   - Implement retry logic
 
-4. **Error Handling**
-   - Implement reconnection logic
-   - Handle partial messages
-   - Monitor error rates
-   - Log connection issues
-
-## Message Examples
-
-### Request Message
-```typescript
-// Frame structure
-const frame = Buffer.alloc(messageLength + 8);
-frame.writeUInt32BE(messageLength, 0);  // Length
-frame.writeUInt32BE(0, 4);              // Flags
-
-// Message content
-const message = Buffer.from('REQUEST:service.action:1.0.0:req-uuid\n{"data":"test"}');
-message.copy(frame, 8);
-```
-
-### Keep-Alive Message
-```typescript
-// Keep-alive frame (8 bytes)
-const keepAlive = Buffer.alloc(8);
-keepAlive.writeUInt32BE(0, 0);     // Length = 0
-keepAlive.writeUInt32BE(1, 4);     // Flags = KEEPALIVE
-```
+4. **Performance**
+   - Buffer messages when appropriate
+   - Monitor message rates
+   - Handle backpressure
