@@ -372,6 +372,34 @@ describe('TCPSocketConnection', () => {
     });
 });
 
+// Mock net and tls modules
+jest.mock('net', () => ({
+    createServer: jest.fn().mockReturnValue({
+        on: jest.fn().mockReturnThis(),
+        listen: jest.fn().mockImplementation(function(this: any, ...args: any[]) {
+            const callback = args[2];
+            if (callback && typeof callback === 'function') {
+                callback();
+            }
+            return this;
+        })
+    }),
+    Socket: jest.fn()
+}));
+
+jest.mock('tls', () => ({
+    createServer: jest.fn().mockReturnValue({
+        on: jest.fn().mockReturnThis(),
+        listen: jest.fn()
+    }),
+    TLSSocket: jest.fn()
+}));
+
+// Mock fs module
+jest.mock('fs', () => ({
+    readFileSync: jest.fn().mockReturnValue('mock-content')
+}));
+
 /**
  * Test suite for TCP server creation and management
  * @group unit
@@ -379,16 +407,22 @@ describe('TCPSocketConnection', () => {
  * @group protocols
  */
 describe('createTcpServer', () => {
-    let mockConnectionManager: any; // Use any type to avoid ConnectionManager interface issues
+    let mockConnectionManager: any;
     let mockServer: jest.Mocked<net.Server>;
     let mockTlsServer: jest.Mocked<tls.Server>;
     let mockSocket: jest.Mocked<net.Socket>;
     let mockTlsSocket: jest.Mocked<tls.TLSSocket>;
     let mockConfig: any;
 
+    // Helper function to safely get event handler
+    function getEventHandler<T>(calls: [string, any][], eventName: string): T | undefined {
+        const call = calls.find(([event]) => event === eventName);
+        return call?.[1] as T;
+    }
+
     beforeEach(() => {
         // Reset all mocks
-        jest.resetAllMocks();
+        jest.clearAllMocks();
 
         // Mock the socket
         mockSocket = {
@@ -405,23 +439,9 @@ describe('createTcpServer', () => {
             destroy: jest.fn()
         } as unknown as jest.Mocked<tls.TLSSocket>;
 
-        // Mock the server
-        mockServer = {
-            on: jest.fn().mockReturnThis(),
-            listen: jest.fn().mockImplementation(function(this: net.Server, ...args: any[]) {
-                const callback = args[2];
-                if (callback && typeof callback === 'function') {
-                    callback();
-                }
-                return this;
-            }),
-        } as unknown as jest.Mocked<net.Server>;
-
-        // Mock the TLS server
-        mockTlsServer = {
-            on: jest.fn().mockReturnThis(),
-            listen: jest.fn(),
-        } as unknown as jest.Mocked<tls.Server>;
+        // Get the mocked servers from the mocked modules
+        mockServer = require('net').createServer() as jest.Mocked<net.Server>;
+        mockTlsServer = require('tls').createServer() as jest.Mocked<tls.Server>;
 
         // Mock connection manager
         mockConnectionManager = {
@@ -447,17 +467,8 @@ describe('createTcpServer', () => {
                 heartbeatDeregisterTimeout: 30000
             }
         };
-
-        // Setup mocks
-        jest.spyOn(net, 'createServer').mockReturnValue(mockServer);
-        jest.spyOn(tls, 'createServer').mockReturnValue(mockTlsServer);
-        jest.spyOn(fs, 'readFileSync').mockReturnValue('mock-content');
     });
 
-    /**
-     * Tests for non-TLS server creation
-     * @group non-tls
-     */
     describe('non-TLS server', () => {
         beforeEach(() => {
             (global as any).config = mockConfig;
@@ -475,13 +486,14 @@ describe('createTcpServer', () => {
             createTcpServer(mockConnectionManager);
 
             // Get and call the connection handler
-            const onCalls = mockServer.on.mock.calls;
-            const connectionHandler = onCalls.find(
-                ([event]) => event === 'connection'
-            )?.[1] as (socket: net.Socket) => void;
-
+            const connectionHandler = getEventHandler<(socket: net.Socket) => void>(
+                mockServer.on.mock.calls,
+                'connection'
+            );
             expect(connectionHandler).toBeDefined();
-            connectionHandler(mockSocket);
+            if (connectionHandler) {
+                connectionHandler(mockSocket);
+            }
 
             expect(mockConnectionManager.addConnection).toHaveBeenCalled();
             expect(mockSocket.setTimeout).toHaveBeenCalledWith(31000);
@@ -492,22 +504,24 @@ describe('createTcpServer', () => {
             createTcpServer(mockConnectionManager);
 
             // Get and call the connection handler
-            const onCalls = mockServer.on.mock.calls;
-            const connectionHandler = onCalls.find(
-                ([event]) => event === 'connection'
-            )?.[1] as (socket: net.Socket) => void;
-
+            const connectionHandler = getEventHandler<(socket: net.Socket) => void>(
+                mockServer.on.mock.calls,
+                'connection'
+            );
             expect(connectionHandler).toBeDefined();
-            connectionHandler(mockSocket);
+            if (connectionHandler) {
+                connectionHandler(mockSocket);
+            }
 
             // Get and call the error handler
-            const socketOnCalls = mockSocket.on.mock.calls;
-            const errorHandler = socketOnCalls.find(
-                ([event]) => event === 'error'
-            )?.[1] as (err: Error) => void;
-
+            const errorHandler = getEventHandler<(err: Error) => void>(
+                mockSocket.on.mock.calls,
+                'error'
+            );
             expect(errorHandler).toBeDefined();
-            errorHandler(new Error('test error'));
+            if (errorHandler) {
+                errorHandler(new Error('test error'));
+            }
 
             expect(mockConnectionManager.removeConnection).toHaveBeenCalled();
             expect(logger.error).toHaveBeenCalled();
@@ -517,31 +531,29 @@ describe('createTcpServer', () => {
             createTcpServer(mockConnectionManager);
 
             // Get and call the connection handler
-            const onCalls = mockServer.on.mock.calls;
-            const connectionHandler = onCalls.find(
-                ([event]) => event === 'connection'
-            )?.[1] as (socket: net.Socket) => void;
-
+            const connectionHandler = getEventHandler<(socket: net.Socket) => void>(
+                mockServer.on.mock.calls,
+                'connection'
+            );
             expect(connectionHandler).toBeDefined();
-            connectionHandler(mockSocket);
+            if (connectionHandler) {
+                connectionHandler(mockSocket);
+            }
 
             // Get and call the timeout handler
-            const socketOnCalls = mockSocket.on.mock.calls;
-            const timeoutHandler = socketOnCalls.find(
-                ([event]) => event === 'timeout'
-            )?.[1] as () => void;
-
+            const timeoutHandler = getEventHandler<() => void>(
+                mockSocket.on.mock.calls,
+                'timeout'
+            );
             expect(timeoutHandler).toBeDefined();
-            timeoutHandler();
+            if (timeoutHandler) {
+                timeoutHandler();
+            }
 
             expect(mockSocket.end).toHaveBeenCalled();
         });
     });
 
-    /**
-     * Tests for TLS server creation
-     * @group tls
-     */
     describe('TLS server', () => {
         beforeEach(() => {
             mockConfig.ssl = {
@@ -567,52 +579,45 @@ describe('createTcpServer', () => {
             createTcpServer(mockConnectionManager);
 
             // Get and call the TLS error handler
-            const onCalls = mockTlsServer.on.mock.calls;
-            const tlsErrorHandler = onCalls.find(
-                ([event]) => event === 'tlsClientError'
-            )?.[1] as (err: Error, tlsSocket: tls.TLSSocket) => void;
-
+            const tlsErrorHandler = getEventHandler<(err: Error, tlsSocket: tls.TLSSocket) => void>(
+                mockTlsServer.on.mock.calls,
+                'tlsClientError'
+            );
             expect(tlsErrorHandler).toBeDefined();
+            if (tlsErrorHandler) {
+                // Test ECONNRESET error
+                const econnresetError = new Error('test error');
+                (econnresetError as any).code = 'ECONNRESET';
+                tlsErrorHandler(econnresetError, mockTlsSocket);
+                expect(logger.debug).toHaveBeenCalled();
+                expect(mockTlsSocket.destroy).toHaveBeenCalled();
 
-            // Test ECONNRESET error
-            const econnresetError = new Error('test error');
-            (econnresetError as any).code = 'ECONNRESET';
-            tlsErrorHandler(econnresetError, mockTlsSocket);
-            expect(logger.debug).toHaveBeenCalled();
-            expect(mockTlsSocket.destroy).toHaveBeenCalled();
-
-            // Test other TLS errors
-            tlsErrorHandler(new Error('other error'), mockTlsSocket);
-            expect(logger.error).toHaveBeenCalled();
-            expect(mockTlsSocket.destroy).toHaveBeenCalledTimes(2);
+                // Test other TLS errors
+                tlsErrorHandler(new Error('other error'), mockTlsSocket);
+                expect(logger.error).toHaveBeenCalled();
+                expect(mockTlsSocket.destroy).toHaveBeenCalledTimes(2);
+            }
         });
     });
 
-    /**
-     * Tests for server error handling
-     * @group errors
-     */
     describe('server error handling', () => {
         it('should handle server errors', () => {
             createTcpServer(mockConnectionManager);
 
             // Get and call the error handler
-            const onCalls = mockServer.on.mock.calls;
-            const errorHandler = onCalls.find(
-                ([event]) => event === 'error'
-            )?.[1] as (err: Error) => void;
-
+            const errorHandler = getEventHandler<(err: Error) => void>(
+                mockServer.on.mock.calls,
+                'error'
+            );
             expect(errorHandler).toBeDefined();
-            errorHandler(new Error('server error'));
+            if (errorHandler) {
+                errorHandler(new Error('server error'));
+            }
 
             expect(logger.error).toHaveBeenCalledWith('TCP server error:', expect.any(Error));
         });
     });
 
-    /**
-     * Tests for server listening
-     * @group listening
-     */
     describe('server listening', () => {
         it('should start listening on configured port and host', () => {
             createTcpServer(mockConnectionManager);
@@ -627,12 +632,7 @@ describe('createTcpServer', () => {
         it('should log appropriate message when server starts listening', () => {
             createTcpServer(mockConnectionManager);
 
-            // Get and call the listen callback
-            const listenCalls = mockServer.listen.mock.calls;
-            expect(listenCalls[0][2]).toBeDefined();
-            const listenCallback = listenCalls[0][2] as () => void;
-            listenCallback();
-
+            // The listen callback is automatically called by our mock implementation
             expect(logger.info).toHaveBeenCalledWith(
                 `TCP server listening on ${mockConfig.host}:${mockConfig.ports.tcp}`
             );

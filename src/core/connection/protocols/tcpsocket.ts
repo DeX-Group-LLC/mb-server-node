@@ -129,6 +129,9 @@ export function createTcpServer(connectionManager: ConnectionManager): net.Serve
             key: fs.readFileSync(config.ssl!.key!),
             cert: fs.readFileSync(config.ssl!.cert!),
             handshakeTimeout: 5000, // 5 seconds timeout for handshake
+            minVersion: 'TLSv1.2',
+            //requestCert: false,
+            //rejectUnauthorized: false
         })
         : net.createServer();
 
@@ -146,7 +149,7 @@ export function createTcpServer(connectionManager: ConnectionManager): net.Serve
     }
 
     // Handle incoming connections
-    server.on('connection', (socket: net.Socket) => {
+    server.on(isTls ? 'secureConnection' : 'connection', (socket: net.Socket) => {
         const ip = socket.remoteAddress || 'unknown';
         logger.info(`Client connected (TCP) from IP ${ip}`);
 
