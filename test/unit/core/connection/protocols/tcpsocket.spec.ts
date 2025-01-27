@@ -7,6 +7,8 @@
  * - Connection lifecycle (open/close)
  * - Error handling and cleanup
  * - Event listener management
+ * - TLS/SSL support
+ * @module test/unit/core/connection/protocols/tcpsocket
  */
 
 import { jest } from '@jest/globals';
@@ -103,8 +105,13 @@ jest.mock('fs', () => ({
 
 /**
  * Mock Socket class that extends EventEmitter
- * Used to simulate TCP socket behavior in tests
- * Provides basic socket functionality needed for testing
+ * @class MockSocket
+ * @extends {EventEmitter}
+ * @description Used to simulate TCP socket behavior in tests:
+ * - Implements basic socket operations (write, end)
+ * - Provides event emission capabilities
+ * - Tracks remote address information
+ * - Simulates network operations
  */
 class MockSocket extends EventEmitter {
     write = jest.fn();
@@ -117,6 +124,12 @@ class MockSocket extends EventEmitter {
  * @group unit
  * @group connection
  * @group protocols
+ * @description Tests the core functionality of TCP socket connections:
+ * - Connection initialization and setup
+ * - State management and transitions
+ * - Message framing and transmission
+ * - Error handling and recovery
+ * - Resource cleanup
  */
 describe('TCPSocketConnection', () => {
     let socket: MockSocket;
@@ -143,11 +156,15 @@ describe('TCPSocketConnection', () => {
     /**
      * Tests for connection constructor and initialization
      * @group initialization
+     * @description Verifies proper connection setup:
+     * - IP address assignment
+     * - Initial state configuration
+     * - Event handler registration
      */
     describe('constructor', () => {
         /**
-         * Tests that connection is initialized with correct IP and state
-         * Verifies basic connection setup functionality
+         * @test Verifies initial connection state and IP address assignment
+         * @expected IP should be '127.0.0.1' and state should be OPEN
          */
         it('should initialize with correct IP and open state', () => {
             expect(connection.ip).toBe('127.0.0.1');
@@ -158,11 +175,15 @@ describe('TCPSocketConnection', () => {
     /**
      * Tests for connection state management
      * @group state
+     * @description Verifies state transitions:
+     * - Initial OPEN state
+     * - Transition to CLOSED state
+     * - State consistency
      */
     describe('state', () => {
         /**
-         * Tests that connection reports OPEN state when connected
-         * Verifies initial state after construction
+         * @test Verifies initial connection state after construction
+         * @expected Connection state should be OPEN
          */
         it('should return OPEN when connected', () => {
             expect(connection.state).toBe(ConnectionState.OPEN);
@@ -181,11 +202,16 @@ describe('TCPSocketConnection', () => {
     /**
      * Tests for message handling functionality
      * @group messaging
+     * @description Verifies message processing:
+     * - Message framing and reassembly
+     * - Fragmented message handling
+     * - Multiple message processing
+     * - Size limit enforcement
      */
     describe('onMessage', () => {
         /**
-         * Tests that message listener is called when data is received
-         * Verifies basic message reception and framing
+         * @test Verifies message reception and listener notification
+         * @expected Listener should be called with the message content
          */
         it('should call listener when data is received', () => {
             const listener = jest.fn();
@@ -205,8 +231,8 @@ describe('TCPSocketConnection', () => {
         });
 
         /**
-         * Tests that connection handles fragmented messages correctly
-         * Verifies message reassembly from multiple data chunks
+         * @test Verifies handling of fragmented message data
+         * @expected Message should be reassembled and listener called once with complete message
          */
         it('should handle fragmented messages correctly', () => {
             const listener = jest.fn();
@@ -291,8 +317,8 @@ describe('TCPSocketConnection', () => {
         });
 
         /**
-         * Tests that connection handles missing message listener gracefully
-         * Verifies robustness when no listener is registered
+         * @test Verifies behavior when no message listener is registered
+         * @expected Should not throw error when processing message
          */
         it('should not call listener if none is registered', () => {
             const testData = Buffer.from('test message');
@@ -305,8 +331,8 @@ describe('TCPSocketConnection', () => {
         });
 
         /**
-         * Tests that connection enforces message size limits
-         * Verifies message length validation and connection closure on violation
+         * @test Verifies message size limit enforcement
+         * @expected Should close connection and log error when message exceeds size limit
          */
         it('should close connection when message length exceeds maximum', () => {
             // Register a message listener to ensure it's not called
@@ -331,11 +357,15 @@ describe('TCPSocketConnection', () => {
     /**
      * Tests for connection closure handling
      * @group closure
+     * @description Verifies connection termination:
+     * - Clean shutdown
+     * - Event propagation
+     * - Resource cleanup
      */
     describe('onClose', () => {
         /**
-         * Tests that close listener is called when connection closes
-         * Verifies close event propagation
+         * @test Verifies close event propagation to listener
+         * @expected Close listener should be called when connection closes
          */
         it('should call listener when connection closes', () => {
             const listener = jest.fn();
@@ -345,8 +375,8 @@ describe('TCPSocketConnection', () => {
         });
 
         /**
-         * Tests that connection handles missing close listener gracefully
-         * Verifies robustness when no listener is registered
+         * @test Verifies behavior when no close listener is registered
+         * @expected Should not throw error when connection closes
          */
         it('should not call listener if none is registered', () => {
             expect(() => {
@@ -358,11 +388,15 @@ describe('TCPSocketConnection', () => {
     /**
      * Tests for message sending functionality
      * @group messaging
+     * @description Verifies outbound message handling:
+     * - Message framing
+     * - State validation
+     * - Error handling
      */
     describe('send', () => {
         /**
-         * Tests that messages are written to socket when connection is open
-         * Verifies message framing and transmission
+         * @test Verifies message framing and transmission
+         * @expected Message should be properly framed and written to socket
          */
         it('should write framed message to socket when connection is open', () => {
             const message = 'test message';
@@ -378,8 +412,8 @@ describe('TCPSocketConnection', () => {
         });
 
         /**
-         * Tests that sending messages on closed connection throws error
-         * Verifies proper error handling for invalid state
+         * @test Verifies error handling when sending to closed connection
+         * @expected Should throw error with appropriate message
          */
         it('should throw error when trying to send message on closed connection', () => {
             socket.emit('close');
@@ -392,8 +426,16 @@ describe('TCPSocketConnection', () => {
     /**
      * Tests for connection closure functionality
      * @group closure
+     * @description Verifies connection closure operations:
+     * - Socket termination
+     * - Event notification
+     * - State updates
      */
     describe('close', () => {
+        /**
+         * @test Verifies connection closure with listener
+         * @expected Socket should end, listener called, and state updated
+         */
         it('should end socket and call close listener when connection is open', () => {
             const closeListener = jest.fn();
             connection.onClose(closeListener);
@@ -403,12 +445,20 @@ describe('TCPSocketConnection', () => {
             expect(connection.state).toBe(ConnectionState.CLOSED);
         });
 
+        /**
+         * @test Verifies connection closure without listener
+         * @expected Socket should end and state updated without error
+         */
         it('should end socket without error when no close listener is set', () => {
             connection.close();
             expect(socket.end).toHaveBeenCalled();
             expect(connection.state).toBe(ConnectionState.CLOSED);
         });
 
+        /**
+         * @test Verifies closure of already closed connection
+         * @expected Should not attempt to end socket again
+         */
         it('should not end socket when connection is already closed', () => {
             socket.emit('close');
             connection.close();
@@ -419,11 +469,15 @@ describe('TCPSocketConnection', () => {
     /**
      * Tests for error handling functionality
      * @group errors
+     * @description Verifies error management:
+     * - Socket error handling
+     * - Connection state updates
+     * - Resource cleanup
      */
     describe('error handling', () => {
         /**
-         * Tests that socket errors trigger connection closure
-         * Verifies error event handling and cleanup
+         * @test Verifies connection state after socket error
+         * @expected Connection should transition to CLOSED state
          */
         it('should close connection on socket error', () => {
             socket.emit('error', new Error('test error'));
@@ -437,6 +491,11 @@ describe('TCPSocketConnection', () => {
  * @group unit
  * @group connection
  * @group protocols
+ * @description Tests TCP server functionality:
+ * - Server creation and configuration
+ * - Connection acceptance and handling
+ * - TLS/SSL support
+ * - Error management
  */
 describe('createTcpServer', () => {
     let mockConnectionManager: any;
@@ -445,7 +504,13 @@ describe('createTcpServer', () => {
     let mockSocket: jest.Mocked<net.Socket>;
     let mockTlsSocket: jest.Mocked<tls.TLSSocket>;
 
-    // Helper function to safely get event handler
+    /**
+     * Helper function to safely get event handler
+     * @template T - The type of the event handler
+     * @param {[string, any][]} calls - Array of event registration calls
+     * @param {string} eventName - Name of the event to find handler for
+     * @returns {T | undefined} The event handler if found
+     */
     function getEventHandler<T>(calls: [string, any][], eventName: string): T | undefined {
         const call = calls.find(([event]) => event === eventName);
         return call?.[1] as T;
@@ -491,6 +556,14 @@ describe('createTcpServer', () => {
         };
     });
 
+    /**
+     * Tests for non-TLS server configuration
+     * @description Verifies plain TCP server:
+     * - Server creation
+     * - Connection handling
+     * - Timeout management
+     * - Error scenarios
+     */
     describe('non-TLS server', () => {
         beforeEach(() => {
             // Reset SSL settings and mocks
@@ -501,6 +574,10 @@ describe('createTcpServer', () => {
             mockSocket.on.mockReset();
         });
 
+        /**
+         * @test Verifies TCP server creation without TLS
+         * @expected Should create plain TCP server without TLS configuration
+         */
         it('should create a TCP server without TLS', () => {
             const server = createTcpServer(mockConnectionManager);
 
@@ -509,6 +586,10 @@ describe('createTcpServer', () => {
             expect(server).toBe(mockServer);
         });
 
+        /**
+         * @test Verifies handling of incoming TCP connections
+         * @expected Should add connection and set appropriate timeouts
+         */
         it('should handle incoming connections', () => {
             createTcpServer(mockConnectionManager);
 
@@ -573,6 +654,10 @@ describe('createTcpServer', () => {
             }
         });
 
+        /**
+         * @test Verifies socket timeout handling
+         * @expected Should end socket when timeout occurs
+         */
         it('should handle socket timeout', () => {
             createTcpServer(mockConnectionManager);
 
@@ -599,6 +684,10 @@ describe('createTcpServer', () => {
             expect(mockSocket.end).toHaveBeenCalled();
         });
 
+        /**
+         * @test Verifies handling of connections with undefined remote address
+         * @expected Should handle connection with 'unknown' IP address
+         */
         it('should handle incoming connections with undefined remote address', () => {
             createTcpServer(mockConnectionManager);
 
@@ -631,6 +720,14 @@ describe('createTcpServer', () => {
         });
     });
 
+    /**
+     * Tests for TLS server configuration
+     * @description Verifies TLS-enabled server:
+     * - Secure server creation
+     * - Certificate handling
+     * - TLS handshake
+     * - Secure connection management
+     */
     describe('TLS server', () => {
         beforeEach(() => {
             const { config } = require('@config');
@@ -648,6 +745,10 @@ describe('createTcpServer', () => {
             config.ssl = undefined;
         });
 
+        /**
+         * @test Verifies TLS server creation with SSL configuration
+         * @expected Should create TLS server with proper certificate configuration
+         */
         it('should create a TLS server when SSL is configured', () => {
             const server = createTcpServer(mockConnectionManager);
 
@@ -660,6 +761,10 @@ describe('createTcpServer', () => {
             expect(server).toBe(mockTlsServer);
         });
 
+        /**
+         * @test Verifies TLS error handling for undefined remote addresses
+         * @expected Should handle and log TLS errors appropriately
+         */
         it('should handle TLS client errors with undefined remote address', () => {
             createTcpServer(mockConnectionManager);
 
@@ -693,6 +798,10 @@ describe('createTcpServer', () => {
             }
         });
 
+        /**
+         * @test Verifies secure connection establishment
+         * @expected Should properly set up secure connection with timeouts
+         */
         it('should handle secure connections', () => {
             createTcpServer(mockConnectionManager);
 
@@ -721,7 +830,18 @@ describe('createTcpServer', () => {
         });
     });
 
+    /**
+     * Tests for server error handling
+     * @description Verifies server-level errors:
+     * - Error event handling
+     * - Logging behavior
+     * - Server stability
+     */
     describe('server error handling', () => {
+        /**
+         * @test Verifies server-level error handling
+         * @expected Should log server errors appropriately
+         */
         it('should handle server errors', () => {
             createTcpServer(mockConnectionManager);
 
@@ -739,7 +859,18 @@ describe('createTcpServer', () => {
         });
     });
 
+    /**
+     * Tests for server listening functionality
+     * @description Verifies server startup:
+     * - Port binding
+     * - Host configuration
+     * - SSL/TLS setup
+     */
     describe('server listening', () => {
+        /**
+         * @test Verifies server port and host configuration
+         * @expected Should listen on configured port and host
+         */
         it('should start listening on configured port and host', () => {
             createTcpServer(mockConnectionManager);
 
@@ -750,6 +881,10 @@ describe('createTcpServer', () => {
             );
         });
 
+        /**
+         * @test Verifies server startup logging without SSL
+         * @expected Should log appropriate startup message without SSL
+         */
         it('should log appropriate message when server starts listening without SSL', () => {
             const { config } = require('@config');
             config.ssl = undefined;
@@ -760,6 +895,10 @@ describe('createTcpServer', () => {
             );
         });
 
+        /**
+         * @test Verifies server startup logging with SSL
+         * @expected Should log appropriate startup message with SSL enabled
+         */
         it('should log appropriate message when server starts listening with SSL', () => {
             const { config } = require('@config');
             config.ssl = {

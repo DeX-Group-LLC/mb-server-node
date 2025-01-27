@@ -5,6 +5,8 @@
  * - Message handling and validation
  * - Connection closure and cleanup
  * - Error handling and logging
+ * - WebSocket server creation and configuration
+ * @module test/unit/core/connection/protocols/websocket
  */
 
 import { WebSocket, WebSocketServer } from 'ws';
@@ -77,7 +79,13 @@ jest.mock('@utils/logger', () => {
  * Extended WebSocket interface for testing
  * @interface MockWebSocket
  * @extends {Partial<WebSocket>}
- * @description Adds properties needed to track state and handlers in tests
+ * @description Adds properties needed to track state and handlers in tests:
+ * - _readyState: Internal state tracking
+ * - readyState: Public state accessor
+ * - errorHandler: Optional error callback
+ * - on: Mock event handler registration
+ * - send: Mock message sending
+ * - close: Mock connection closure
  */
 interface MockWebSocket extends Partial<WebSocket> {
     _readyState: WebSocket['readyState'];
@@ -92,7 +100,8 @@ interface MockWebSocket extends Partial<WebSocket> {
  * Extended WebSocketServer interface for testing
  * @interface MockWebSocketServer
  * @extends {jest.Mocked<WebSocketServer>}
- * @description Adds properties needed to track error handlers in tests
+ * @description Adds properties needed to track error handlers in tests:
+ * - errorHandler: Optional error callback for server-level errors
  */
 interface MockWebSocketServer extends jest.Mocked<WebSocketServer> {
     errorHandler: ((err: Error) => void) | null;
@@ -103,6 +112,11 @@ interface MockWebSocketServer extends jest.Mocked<WebSocketServer> {
  * @group unit
  * @group connection
  * @group protocols
+ * @description Tests the WebSocketConnection class functionality including:
+ * - Connection state transitions
+ * - Message handling and validation
+ * - Error scenarios and recovery
+ * - Connection lifecycle management
  */
 describe('WebSocket Implementation', () => {
     let mockWs: MockWebSocket;
@@ -137,7 +151,8 @@ describe('WebSocket Implementation', () => {
      */
     describe('state', () => {
         /**
-         * Tests that connection reports OPEN state when WebSocket is open
+         * @test Verifies that the connection state is reported as OPEN when the WebSocket is open
+         * @expected Connection state should be ConnectionState.OPEN
          */
         it('should return OPEN when WebSocket is open', () => {
             mockWs._readyState = WebSocket.OPEN;
@@ -145,7 +160,8 @@ describe('WebSocket Implementation', () => {
         });
 
         /**
-         * Tests that connection reports CLOSED state when WebSocket is not open
+         * @test Verifies that the connection state is reported as CLOSED when the WebSocket is closed
+         * @expected Connection state should be ConnectionState.CLOSED
          */
         it('should return CLOSED when WebSocket is not open', () => {
             mockWs._readyState = WebSocket.CLOSED;
@@ -159,7 +175,8 @@ describe('WebSocket Implementation', () => {
      */
     describe('onMessage', () => {
         /**
-         * Tests that message listener is properly registered
+         * @test Verifies that message listener is properly registered with the WebSocket
+         * @expected WebSocket.on should be called with 'message' event and a function handler
          */
         it('should register message listener', () => {
             const listener = jest.fn();
@@ -168,7 +185,8 @@ describe('WebSocket Implementation', () => {
         });
 
         /**
-         * Tests that received messages are forwarded to listener
+         * @test Verifies that received messages are correctly forwarded to the registered listener
+         * @expected Listener should be called with the message buffer
          */
         it('should forward received messages to listener', () => {
             const listener = jest.fn();
@@ -256,6 +274,11 @@ describe('WebSocket Implementation', () => {
  * @group unit
  * @group connection
  * @group protocols
+ * @description Tests the WebSocket server creation and configuration including:
+ * - Server initialization with and without SSL
+ * - Connection handling and validation
+ * - Error handling at server level
+ * - Client connection management
  */
 describe('createWebSocketServer', () => {
     let mockConnectionManager: any;
@@ -327,6 +350,14 @@ describe('createWebSocketServer', () => {
         (WebSocketServer as unknown as jest.Mock).mockImplementation(() => mockWss);
     });
 
+    /**
+     * Tests for non-SSL server configuration
+     * @description Verifies server behavior without SSL:
+     * - Basic server creation
+     * - Connection handling
+     * - Error management
+     * - IP address validation
+     */
     describe('non-SSL server', () => {
         beforeEach(() => {
             // Reset SSL settings
@@ -334,6 +365,10 @@ describe('createWebSocketServer', () => {
             config.ssl = undefined;
         });
 
+        /**
+         * @test Verifies WebSocket server creation without SSL configuration
+         * @expected Should create HTTP server and WebSocket server with correct configuration
+         */
         it('should create a WebSocket server without SSL', () => {
             const wss = createWebSocketServer(mockConnectionManager);
 
@@ -346,6 +381,10 @@ describe('createWebSocketServer', () => {
             expect(wss).toBe(mockWss);
         });
 
+        /**
+         * @test Verifies handling of incoming WebSocket connections
+         * @expected Should add connection to manager and log connection info
+         */
         it('should handle incoming connections', () => {
             createWebSocketServer(mockConnectionManager);
 
@@ -372,6 +411,10 @@ describe('createWebSocketServer', () => {
             }
         });
 
+        /**
+         * @test Verifies handling of connections with undefined remote address
+         * @expected Should handle connection with 'unknown' IP address
+         */
         it('should handle connections with undefined remote address', () => {
             createWebSocketServer(mockConnectionManager);
 
@@ -399,6 +442,10 @@ describe('createWebSocketServer', () => {
             }
         });
 
+        /**
+         * @test Verifies WebSocket error handling
+         * @expected Should remove connection and log error with service details
+         */
         it('should handle WebSocket errors', () => {
             createWebSocketServer(mockConnectionManager);
 
@@ -439,6 +486,13 @@ describe('createWebSocketServer', () => {
         });
     });
 
+    /**
+     * Tests for SSL server configuration
+     * @description Verifies server behavior with SSL:
+     * - SSL server creation
+     * - Certificate handling
+     * - Secure connection establishment
+     */
     describe('SSL server', () => {
         beforeEach(() => {
             const { config } = require('@config');
@@ -454,6 +508,10 @@ describe('createWebSocketServer', () => {
             config.ssl = undefined;
         });
 
+        /**
+         * @test Verifies server startup logging with SSL enabled
+         * @expected Should log appropriate message indicating SSL is enabled
+         */
         it('should log appropriate message when server starts listening', () => {
             createWebSocketServer(mockConnectionManager);
 
@@ -468,7 +526,18 @@ describe('createWebSocketServer', () => {
         });
     });
 
+    /**
+     * Tests for server error handling
+     * @description Verifies server-level error handling:
+     * - Error event propagation
+     * - Error logging
+     * - Server stability after errors
+     */
     describe('server error handling', () => {
+        /**
+         * @test Verifies server-level error handling
+         * @expected Should log server error with appropriate message
+         */
         it('should handle server errors', () => {
             createWebSocketServer(mockConnectionManager);
 
