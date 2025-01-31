@@ -158,39 +158,9 @@ export class TopicTrie<T, C extends LeafCollection<T>> {
      * @throws {Error} If the topic is invalid according to `TOPIC_REGEX`.
      */
     public set(topic: string, leaf: T): void {
-        // Validate the topic, including the wildcard characters
         if (!TOPIC_REGEX.test(topic)) throw new Error('Invalid topic name');
-        let node = this.root;
-        const parts = topic.split('.');
-
-        for (let i = 0; i < parts.length; i++) {
-            const part = parts[i];
-
-            // Handle hash wildcard (#) - must be at the end
-            if (part === '#') {
-                if (!node.hashWildcard) node.hashWildcard = this.createLeafCollection();
-                node.hashWildcard.add(leaf);
-                return; // Hash wildcard must be the last part, so we are done
-            }
-
-            // Handle plus wildcard (+)
-            if (part === '+') {
-                if (!node.plusWildcard) node.plusWildcard = this.emptyNode();
-                node = node.plusWildcard;
-            } else {
-                // Get or create the child node for this part (exact match)
-                let child = node.children.get(part);
-                if (!child) {
-                    child = this.emptyNode();
-                    node.children.set(part, child);
-                }
-                node = child;
-            }
-        }
-
-        // Add the leaf to the final node's leaf collection.
-        // This node represents the end of the topic path for the given topic.
-        node.leafs.add(leaf);
+        const collection = this.getOrCreateCollection(topic);
+        collection.add(leaf);
     }
 
     /**
@@ -219,84 +189,17 @@ export class TopicTrie<T, C extends LeafCollection<T>> {
      * @throws {Error} If the topic is invalid according to `TOPIC_REGEX`.
      */
     public *get(topic: string): Generator<T> {
-        // Validate the topic
         if (!TOPIC_REGEX.test(topic)) throw new Error('Invalid topic name');
-        const parts = topic.split('.');
         const returned = new Set<T>(); // Keep track of returned leaves to avoid duplicates
 
-        // Start recursive traversal from the root node
-        yield* this.getMatches(this.root, parts, 0, returned);
-    }
-
-    /**
-     * Recursively traverses the trie to find and yield leaves that match a topic path.
-     * This is the core matching logic, handling exact matches and wildcard matches ('+' and '#').
-     *
-     * The order of checks and yields is important for correct matching and performance.
-     *
-     * @private
-     * @param node The current trie node being examined.
-     * @param parts The array of topic segments to match against.
-     * @param depth The current depth in the topic path (index of the current segment in `parts`).
-     * @param returned A Set to keep track of leaves already yielded to prevent duplicates.
-     * @returns A generator that yields matching leaves from this node and its descendants.
-     */
-    private *getMatches(
-        node: TrieNode<T, C>,
-        parts: string[],
-        depth: number,
-        returned: Set<T>
-    ): Generator<T> {
-        // Base case: If we have reached the target depth (all topic parts processed),
-        // yield the leaves associated with the current node (exact matches).
-        if (depth === parts.length) {
-            for (const leaf of node.leafs) {
+        // Iterate through all matching collections and yield their leaves
+        for (const collection of this.getMatchingCollections(topic)) {
+            for (const leaf of collection) {
                 if (!returned.has(leaf)) {
                     returned.add(leaf);
                     yield leaf;
                 }
             }
-            // If there's a '#' wildcard at this node, it also matches subscriptions at this level
-            // (because '#' matches zero or more levels). Yield those matches as well.
-            if (node.hashWildcard) {
-                for (const leaf of node.hashWildcard) {
-                    if (!returned.has(leaf)) {
-                        returned.add(leaf);
-                        yield leaf;
-                    }
-                }
-            }
-            return; // Stop recursion at this branch
-        }
-
-        const part = parts[depth]; // Current topic segment to match
-        const nextNode = node.children.get(part); // Try to get child node for exact match
-
-        // 1. Try to match the current topic segment with an exact child node.
-        // If there's a child node for the current segment, traverse down that path.
-        if (nextNode) {
-            yield* this.getMatches(nextNode, parts, depth + 1, returned); // Recursive call for exact match
-        }
-
-        // 2. Try to match with the '+' wildcard.
-        // If the current node has a '+' wildcard child, traverse down that path.
-        // The '+' wildcard matches any single segment, so we continue matching the rest of the topic.
-        if (node.plusWildcard) {
-            yield* this.getMatches(node.plusWildcard, parts, depth + 1, returned); // Recursive call for '+' wildcard
-        }
-
-        // 3. Check for '#' wildcard matches.
-        // If the current node has a '#' wildcard, it means subscriptions at this node with '#'
-        // match the current topic and all subsequent levels.
-        if (node.hashWildcard) {
-            // Then yield the leaves from the '#' wildcard collection (for subscriptions like 'a/b/#')
-            for (const leaf of node.hashWildcard) {
-                if (!returned.has(leaf)) {
-                    returned.add(leaf);
-                    yield leaf;
-                }
-            }
-            // Note: No recursion after '#' - '#' matches remaining levels, so we don't go deeper.
         }
     }
 
@@ -394,6 +297,126 @@ export class TopicTrie<T, C extends LeafCollection<T>> {
     public clear(): void {
         this.root = this.emptyNode(); // Simply replace the root with a new empty node, garbage collector will handle the rest
     }
+
+    /**
+     * Gets or creates a leaf collection for a given topic pattern.
+     * This provides direct access to the collection for manual manipulation.
+     *
+     * Supports two wildcard characters in the topic pattern:
+     * - `+`: Matches a single level.
+     * - `#`: Matches zero or more levels, must be at the end of the pattern.
+     *
+     * @param topic The topic pattern to get or create a collection for. Must be a valid topic string.
+     * @returns The leaf collection associated with the topic pattern.
+     * @throws {Error} If the topic is invalid according to `TOPIC_REGEX`.
+     */
+    public getOrCreateCollection(topic: string): C {
+        if (!TOPIC_REGEX.test(topic)) throw new Error('Invalid topic name');
+        let node = this.root;
+        const parts = topic.split('.');
+
+        for (let i = 0; i < parts.length; i++) {
+            const part = parts[i];
+
+            // Handle hash wildcard (#) - must be at the end
+            if (part === '#') {
+                if (!node.hashWildcard) node.hashWildcard = this.createLeafCollection();
+                return node.hashWildcard;
+            }
+
+            // Handle plus wildcard (+)
+            if (part === '+') {
+                if (!node.plusWildcard) node.plusWildcard = this.emptyNode();
+                node = node.plusWildcard;
+            } else {
+                // Get or create the child node for this part (exact match)
+                let child = node.children.get(part);
+                if (!child) {
+                    child = this.emptyNode();
+                    node.children.set(part, child);
+                }
+                node = child;
+            }
+        }
+
+        return node.leafs;
+    }
+
+    /**
+     * Returns a generator that yields all leaf collections that match the given topic.
+     * This provides direct access to the collections for manual manipulation.
+     *
+     * The matching process follows MQTT wildcard rules:
+     * - Exact topic segments are matched directly.
+     * - `+` wildcard in the subscription matches any single topic segment in the topic.
+     * - `#` wildcard in the subscription matches zero or more topic segments at the end of the topic.
+     *
+     * The order of yielded collections matches the order of the existing `get()` method:
+     * 1. Exact matches (subscriptions without wildcards) are yielded first.
+     * 2. Matches with '+' wildcards are yielded next.
+     * 3. Matches with '#' wildcards are yielded last.
+     *
+     * @param topic The topic to match against subscriptions in the trie. Must be a valid topic string.
+     * @returns A generator that yields all matching leaf collections.
+     * @throws {Error} If the topic is invalid according to `TOPIC_REGEX`.
+     */
+    public *getMatchingCollections(topic: string): Generator<C> {
+        if (!TOPIC_REGEX.test(topic)) throw new Error('Invalid topic name');
+        const returned = new Set<C>(); // Keep track of returned collections to avoid duplicates
+
+        // Start recursive traversal from the root node
+        yield* this.getMatchingCollectionsRecursive(this.root, topic.split('.'), 0, returned);
+    }
+
+    /**
+     * Recursively traverses the trie to find and yield collections that match a topic path.
+     * This is similar to getMatches but operates on collections instead of leaves.
+     *
+     * @private
+     * @param node The current trie node being examined.
+     * @param parts The array of topic segments to match against.
+     * @param depth The current depth in the topic path (index of the current segment in `parts`).
+     * @param returned A Set to keep track of collections already yielded to prevent duplicates.
+     * @returns A generator that yields matching collections from this node and its descendants.
+     */
+    private *getMatchingCollectionsRecursive(
+        node: TrieNode<T, C>,
+        parts: string[],
+        depth: number,
+        returned: Set<C>
+    ): Generator<C> {
+        // Base case: If we have reached the target depth (all topic parts processed)
+        if (depth === parts.length) {
+            if (!returned.has(node.leafs)) {
+                returned.add(node.leafs);
+                yield node.leafs;
+            }
+            if (node.hashWildcard && !returned.has(node.hashWildcard)) {
+                returned.add(node.hashWildcard);
+                yield node.hashWildcard;
+            }
+            return;
+        }
+
+        const part = parts[depth];
+        const nextNode = node.children.get(part);
+
+        // 1. Try exact match
+        if (nextNode) {
+            yield* this.getMatchingCollectionsRecursive(nextNode, parts, depth + 1, returned);
+        }
+
+        // 2. Try '+' wildcard match
+        if (node.plusWildcard) {
+            yield* this.getMatchingCollectionsRecursive(node.plusWildcard, parts, depth + 1, returned);
+        }
+
+        // 3. Check for '#' wildcard matches
+        if (node.hashWildcard && !returned.has(node.hashWildcard)) {
+            returned.add(node.hashWildcard);
+            yield node.hashWildcard;
+        }
+    }
 }
 
 /**
@@ -439,36 +462,81 @@ export class SetLeafCollection<T> implements LeafCollection<T> {
 }
 
 /**
- * Implementation of `LeafCollection` using an `Array`.
- * This collection stores leaves in the order they are added and can contain duplicate leaves.
- * Useful when you need to maintain the order of subscribers or allow multiple subscriptions for the same leaf.
+ * Implementation of `LeafCollection` using a sorted array with set-like uniqueness.
+ * This collection stores unique leaves in sorted order based on a specified property.
+ * Useful when you need to maintain both uniqueness and a specific sort order.
  *
- * @template T The type of the leaf (subscriber) stored in the array.
+ * @template T The type of the leaf stored in the collection
+ * @template K The key of T to use for sorting (must be a number)
  */
-export class ArrayLeafCollection<T> implements LeafCollection<T> {
+export class SortedSetLeafCollection<T, K extends keyof T> implements LeafCollection<T> {
     /**
-     * The underlying Array to store leaves.
+     * The underlying Array to store leaves in sorted order.
      * @private
      */
     private array: T[];
 
     /**
-     * Constructs a new empty ArrayLeafCollection.
+     * The key to use for sorting leaves.
+     * @private
      */
-    constructor() {
+    private readonly sortKey: K;
+
+    /**
+     * Function to determine if two leaves are equal.
+     * @private
+     */
+    private readonly isEqual: (a: T, b: T) => boolean;
+
+    /**
+     * Constructs a new empty SortedSetLeafCollection.
+     *
+     * @param sortKey The key of T to use for sorting
+     * @param isEqual Function to determine leaf equality.
+     */
+    constructor(sortKey: K, isEqual: (a: T, b: T) => boolean) {
         this.array = [];
+        this.sortKey = sortKey;
+        this.isEqual = isEqual;
     }
 
     /** @inheritdoc */
     add(value: T): void {
-        if (!this.array.includes(value)) { // Prevent duplicates in ArrayLeafCollection, consider removing if duplicates are needed and improve performance
+        let i = 0;
+        let index = -1; // Initialize index to -1, which means position to insert not found
+
+        // Find the insertion point while checking for duplicates
+        while (i < this.array.length) {
+            const existing = this.array[i];
+            // If we find the same leaf, update its value if different
+            if (this.isEqual(existing, value)) {
+                if (existing[this.sortKey] === value[this.sortKey]) {
+                    this.array[i] = value;
+                    return; // Already exists with same sort value, nothing else to do
+                } else {
+                    // Remove existing entry and continue to find new insertion point
+                    this.array.splice(i, 1);
+                    continue;
+                }
+            }
+            // Find first position where sort value is less than new value's sort value
+            if (index < 0 && existing[this.sortKey] < value[this.sortKey]) {
+                index = i;
+            }
+            i++;
+        }
+
+        // Insert at found position or push to end if no position found
+        if (index < 0) {
             this.array.push(value);
+        } else {
+            this.array.splice(index, 0, value);
         }
     }
 
     /** @inheritdoc */
     delete(value: T): boolean {
-        const index = this.array.indexOf(value);
+        const index = this.array.findIndex(item => this.isEqual(item, value));
         if (index >= 0) {
             this.array.splice(index, 1);
             return true;

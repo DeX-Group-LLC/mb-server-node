@@ -1,4 +1,4 @@
-import { TopicTrie, SetLeafCollection, ArrayLeafCollection } from '@core/subscription/trie';
+import { TopicTrie, SetLeafCollection, SortedSetLeafCollection } from '@core/subscription/trie';
 
 /**
  * Test suite for TopicTrie class.
@@ -398,6 +398,30 @@ describe('TopicTrie', () => {
             expect(() => trie.delete('in#valid.topic', 'subscriber1')).toThrow('Invalid topic name'); // # in middle
             expect(() => trie.delete('too.many.levels.in.this.topic', 'subscriber1')).toThrow('Invalid topic name'); // Too many levels
         });
+
+        /**
+         * Tests that getOrCreateCollection() throws an error for invalid topic names.
+         * This specifically targets line 314 in trie.ts.
+         */
+        it('should throw error for invalid topic name in getOrCreateCollection', () => {
+            expect(() => trie.getOrCreateCollection('..invalid..')).toThrow('Invalid topic name'); // Consecutive dots
+            expect(() => trie.getOrCreateCollection('.invalid')).toThrow('Invalid topic name');    // Starts with dot
+            expect(() => trie.getOrCreateCollection('invalid.')).toThrow('Invalid topic name');    // Ends with dot
+            expect(() => trie.getOrCreateCollection('in#valid.topic')).toThrow('Invalid topic name'); // # in middle
+            expect(() => trie.getOrCreateCollection('too.many.levels.in.this.topic')).toThrow('Invalid topic name'); // Too many levels
+        });
+
+        /**
+         * Tests that getMatchingCollections() throws an error for invalid topic names.
+         * This specifically targets line 364 in trie.ts.
+         */
+        it('should throw error for invalid topic name in getMatchingCollections', () => {
+            expect(() => Array.from(trie.getMatchingCollections('..invalid..'))).toThrow('Invalid topic name'); // Consecutive dots
+            expect(() => Array.from(trie.getMatchingCollections('.invalid'))).toThrow('Invalid topic name');    // Starts with dot
+            expect(() => Array.from(trie.getMatchingCollections('invalid.'))).toThrow('Invalid topic name');    // Ends with dot
+            expect(() => Array.from(trie.getMatchingCollections('in#valid.topic'))).toThrow('Invalid topic name'); // # in middle
+            expect(() => Array.from(trie.getMatchingCollections('too.many.levels.in.this.topic'))).toThrow('Invalid topic name'); // Too many levels
+        });
     });
 
     /**
@@ -480,60 +504,197 @@ describe('TopicTrie', () => {
             expect(matches).toEqual(['subscriber1']); // Should only appear once
         });
     });
+});
+
+/**
+ * Test suite for SortedSetLeafCollection class.
+ * Tests the implementation of a sorted collection of leaves with custom sorting and equality.
+ * The collection maintains leaves in descending order based on a specified sort property,
+ * while ensuring uniqueness based on a custom equality function.
+ */
+describe('SortedSetLeafCollection', () => {
+    interface TestLeaf {
+        id: string;
+        priority: number;
+    }
+
+    let collection: SortedSetLeafCollection<TestLeaf, 'priority'>;
+
+    beforeEach(() => {
+        collection = new SortedSetLeafCollection<TestLeaf, 'priority'>(
+            'priority',
+            (a, b) => a.id === b.id
+        );
+    });
 
     /**
-     * Tests for ArrayLeafCollection implementation
+     * Tests for adding leaves to the collection.
+     * Verifies the sorting behavior, uniqueness constraints, and priority-based ordering.
      */
-    describe('ArrayLeafCollection', () => {
-        let arrayTrie: TopicTrie<string, ArrayLeafCollection<string>>;
+    describe('add', () => {
+        /**
+         * Tests that leaves are added and maintained in descending order based on priority.
+         * Verifies that the collection correctly sorts multiple leaves with different priorities.
+         */
+        it('should add leaves in sorted order', () => {
+            const leaf1 = { id: '1', priority: 3 };
+            const leaf2 = { id: '2', priority: 1 };
+            const leaf3 = { id: '3', priority: 2 };
 
-        beforeEach(() => {
-            arrayTrie = new TopicTrie<string, ArrayLeafCollection<string>>(() => new ArrayLeafCollection());
+            collection.add(leaf1);
+            collection.add(leaf2);
+            collection.add(leaf3);
+
+            const result = Array.from(collection);
+            expect(result).toEqual([leaf1, leaf3, leaf2]); // Should be sorted by priority in descending order
         });
 
         /**
-         * Tests basic operations with ArrayLeafCollection.
-         * Verifies that subscribers are stored and retrieved in order.
+         * Tests that when a leaf with the same ID but different priority is added,
+         * it replaces the existing leaf and maintains the correct sort order.
          */
-        it('should maintain insertion order', () => {
-            arrayTrie.set('device.status', 'subscriber2');
-            arrayTrie.set('device.status', 'subscriber1');
-            const matches = Array.from(arrayTrie.get('device.status'));
-            expect(matches).toEqual(['subscriber2', 'subscriber1']);
+        it('should update existing leaf with new priority', () => {
+            const leaf1 = { id: '1', priority: 3 };
+            const leaf1Updated = { id: '1', priority: 1 };
+
+            collection.add(leaf1);
+            collection.add(leaf1Updated);
+
+            const result = Array.from(collection);
+            expect(result).toEqual([leaf1Updated]); // Should contain the updated leaf with new priority
+            expect(result.length).toBe(1); // Should not duplicate the leaf
         });
 
         /**
-         * Tests duplicate prevention in ArrayLeafCollection.
-         * Verifies that adding the same subscriber twice only stores it once.
+         * Tests that leaves with the same priority maintain their insertion order.
+         * Verifies that when multiple leaves have equal priority, they are stored
+         * in the order they were added rather than being re-sorted.
          */
-        it('should prevent duplicates', () => {
-            arrayTrie.set('device.status', 'subscriber1');
-            arrayTrie.set('device.status', 'subscriber1');
-            const matches = Array.from(arrayTrie.get('device.status'));
-            expect(matches).toEqual(['subscriber1']);
+        it('should maintain insertion order for same priority', () => {
+            const leaf1 = { id: '1', priority: 1 };
+            const leaf2 = { id: '2', priority: 1 };
+            const leaf3 = { id: '3', priority: 1 };
+
+            collection.add(leaf1);
+            collection.add(leaf2);
+            collection.add(leaf3);
+
+            const result = Array.from(collection);
+            expect(result).toEqual([leaf1, leaf2, leaf3]); // Should maintain insertion order
         });
 
         /**
-         * Tests deletion from ArrayLeafCollection.
-         * Verifies that subscribers can be removed while maintaining order.
+         * Tests that when a leaf with the same ID and priority is added,
+         * it replaces the existing leaf without changing the collection order.
+         * This verifies the update behavior when only non-sort properties change.
          */
-        it('should handle deletion correctly', () => {
-            arrayTrie.set('device.status', 'subscriber1');
-            arrayTrie.set('device.status', 'subscriber2');
-            arrayTrie.set('device.status', 'subscriber3');
-            arrayTrie.delete('device.status', 'subscriber2');
-            const matches = Array.from(arrayTrie.get('device.status'));
-            expect(matches).toEqual(['subscriber1', 'subscriber3']);
+        it('should replace leaf with same id and priority', () => {
+            const leaf1 = { id: '1', priority: 1, data: 'old' };
+            const leaf1Updated = { id: '1', priority: 1, data: 'new' };
+
+            collection.add(leaf1);
+            collection.add(leaf1Updated);
+
+            const result = Array.from(collection);
+            expect(result).toEqual([leaf1Updated]); // Should contain the updated leaf
+            expect(result.length).toBe(1); // Should not duplicate the leaf
+        });
+    });
+
+    /**
+     * Tests for deleting leaves from the collection.
+     * Verifies proper removal of leaves and handling of non-existent leaves.
+     */
+    describe('delete', () => {
+        /**
+         * Tests that an existing leaf can be successfully deleted from the collection.
+         * Verifies that the leaf is removed and the collection maintains its order.
+         */
+        it('should delete existing leaf', () => {
+            const leaf1 = { id: '1', priority: 1 };
+            const leaf2 = { id: '2', priority: 2 };
+
+            collection.add(leaf1);
+            collection.add(leaf2);
+
+            expect(collection.delete(leaf1)).toBe(true);
+            const result = Array.from(collection);
+            expect(result).toEqual([leaf2]);
         });
 
-        it('should return false when deleting non-existent value', () => {
-            const collection = new ArrayLeafCollection<string>();
-            collection.add('a');
-            const deleted = collection.delete('non-existent');
-            expect(deleted).toBe(false);
-            expect(collection.size).toBe(1); // Size should not change
-            const values = [...collection];
-            expect(values).toEqual(['a']); // Content should not change
+        /**
+         * Tests that attempting to delete a non-existent leaf returns false.
+         * Verifies that the collection remains unchanged when deletion fails.
+         */
+        it('should return false when deleting non-existent leaf', () => {
+            const leaf1 = { id: '1', priority: 1 };
+            const leaf2 = { id: '2', priority: 2 };
+
+            collection.add(leaf1);
+            expect(collection.delete(leaf2)).toBe(false);
+            expect(Array.from(collection)).toEqual([leaf1]);
+        });
+    });
+
+    /**
+     * Tests for custom equality function behavior.
+     * Verifies that the collection correctly uses the provided equality function
+     * to determine leaf uniqueness and handle updates.
+     */
+    describe('custom equality', () => {
+        /**
+         * Tests that the custom equality function is used to identify and update leaves.
+         * Verifies that leaves with the same ID (according to the equality function)
+         * are treated as the same leaf, regardless of other property differences.
+         */
+        it('should use custom equality function', () => {
+            const collection = new SortedSetLeafCollection<TestLeaf, 'priority'>(
+                'priority',
+                (a: TestLeaf, b: TestLeaf) => a.id === b.id
+            );
+
+            const leaf1 = { id: '1', priority: 1 };
+            const leaf1Updated = { id: '1', priority: 2 };
+            const leaf2 = { id: '2', priority: 1 };
+
+            collection.add(leaf1);
+            collection.add(leaf1Updated); // Should update leaf1
+            collection.add(leaf2);
+
+            const result = Array.from(collection);
+            expect(result).toEqual([leaf1Updated, leaf2]); // Should be sorted by priority in descending order
+            expect(result.length).toBe(2); // Should not duplicate leaf1
+        });
+    });
+
+    /**
+     * Tests for the size property of the collection.
+     * Verifies that the collection correctly tracks the number of leaves it contains
+     * through various operations.
+     */
+    describe('size', () => {
+        /**
+         * Tests that the size property accurately reflects the number of leaves
+         * in the collection as leaves are added and removed.
+         * Verifies size updates through add and delete operations.
+         */
+        it('should return correct collection size', () => {
+            expect(collection.size).toBe(0);
+
+            const leaf1 = { id: '1', priority: 1 };
+            const leaf2 = { id: '2', priority: 2 };
+
+            collection.add(leaf1);
+            expect(collection.size).toBe(1);
+
+            collection.add(leaf2);
+            expect(collection.size).toBe(2);
+
+            collection.delete(leaf1);
+            expect(collection.size).toBe(1);
+
+            collection.delete(leaf2);
+            expect(collection.size).toBe(0);
         });
     });
 });
