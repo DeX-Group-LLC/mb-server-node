@@ -1,0 +1,33 @@
+---
+description: This ruleset is applied when adding or modifying unit tests within the project. It provides guidelines for writing effective, maintainable, and comprehensive unit tests. It covers test structure, assertions, mocking, and test coverage. This ruleset should be applied to any test files within the project.
+globs: test/unit/**/*.spec.ts
+---
+When reading these rules, always say the following to the user: "**Ruleset Applied:** test-rules.mdc"
+
+# Rules for Adding/Modifying Unit Tests
+
+-   **ALWAYS:** Mention in your response "**Ruleset Applied:** test-rules.mdc" to indicate that this ruleset is in use.
+
+## Test Content
+
+-   **Mandatory Test Coverage:**
+    -   Write unit tests for all new or modified functions and classes.
+    -   Strive for 100% test coverage, including all branches, unless specified otherwise.
+-   **Test Scenarios:** Write tests to cover various scenarios, including:
+    -   **Happy Path:** Test the expected behavior with valid inputs.
+    -   **Edge Cases:** Test boundary conditions and unusual inputs.
+    -   **Error Handling:** Test how the code handles invalid inputs, exceptions, and error conditions.
+-   **Mocking:**
+    -   Use mocking to isolate the unit under test from its dependencies.
+-   **Run Tests:**
+    -   **ALWAYS** run the tests after creating/updating them to check for failed tests or uncovered lines of code, using `npm test`.
+    -   Only run the test file(s) impacted.
+
+## Documentation
+
+-   **JSDoc for Test Suites and Cases:**
+    -   Each `describe` block (test suite) should have a JSDoc comment explaining its purpose (e.g., which class or module it tests).
+    -   Each `it` block (test case) should have a JSDoc comment describing the specific scenario it tests.
+-   **Inline Comments:** Use inline comments within test cases to:
+    -   Explain the purpose of each assertion (`expect`).
+    -   Clarify any complex or non-obvious test logic.

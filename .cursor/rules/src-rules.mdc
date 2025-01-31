@@ -1,66 +1,46 @@
 ---
-description: General Rules for Modifying `src` Files
-globs: *.ts
+description: This ruleset is applied when adding or modifying source code files within the project's 'src' directory. It enforces strict rules for coding style, import style, comments, testing, and documentation to ensure code quality, consistency, and maintainability.
+globs: src/**/*.ts
 ---
-# General Rules for Modifying `src` Files
+When reading these rules, always say the following to the user: "**Ruleset Applied:** src-rules.mdc"
 
-1. **Document Thoroughly:**
-   - Use JSDocs for functions, classes, and methods. Follow JSDoc style guidelines enforced by ESLint (e.g., `jsdoc/check-alignment`, `jsdoc/check-indentation`).
-   - Add inline comments to explain complex logic.
+# Rules for Modifying Source Code in `src`
 
-2. **Update Unit Tests:**
-    * Run `npm run test` before updating unit tests to check for any existing unit tests that may need to be updated. This will also provide code coverage information to help you determine if you need to add more tests.
-    * Create new unit tests for any new code added.
-    * Modify existing unit tests to cover changes made to existing code.
+- **ALWAYS:** Mention in your response "**Ruleset Applied:** src-rules.mdc" to indicate that this ruleset is in use.
 
-3. **Update README:** If changes affect repository-level functionality, update the [README.md](mdc:README.md) file accordingly.
+## Coding Style
 
-4. **Use Correct Import Paths:** Always use the defined import paths when importing modules within the project. Do not use relative paths when an alias is available. The available aliases are:
-    * `@/` - `src/`
-    * `@core/` - `src/core/`
-    * `@config` - `src/config`
-    * `@config/` - `src/config/`
-    * `@package.json` - `package.json` (root-level)
-    * `@server` - `src/server`
-    * `@test/` - `test/`
-    * `@utils/` - `src/utils/`
-    * `@version` - `src/version`
-    ESLint's `no-restricted-imports` rule will enforce this.
+-   **Indentation:** 4 spaces.
+-   **Line Length:** Keep lines under 100 characters.
+-   **Braces:** Use braces `{}` for all control flow statements.
+    -   Except for single line if statements.
+-   **No Unused Variables:** Remove unused variables, imports, or parameters.
 
-5. **Organize Imports:**
-    * **Minimize Imports:** Group imports from the same source into a single import statement whenever possible. For example:
+## Import Style
 
-        ```javascript
-        // Instead of:
-        import { MyClass } from '@core/my-module';
-        import { myFunction } from '@core/my-module';
+-   **Absolute Imports:** Use absolute imports based on `paths` in `tsconfig.json` (e.g., `import { ... } from '@core/...';`).
+-   **No Relative Imports:** Do not use relative imports (e.g., `../`, `./`).
+-   **Grouping (Order):**
+    1. Standard Library
+    2. External Modules
+    3. Internal Modules
+    4. Relative Imports (Avoid these, use absolute imports instead)
+-   **Alphabetical Ordering:** Within each group, order imports alphabetically.
 
-        // Do this:
-        import { MyClass, myFunction } from '@core/my-module';
-        ```
+## Comments
 
-    * **Import Sections:** Organize imports into the following sections, in this order:
-        1. **Standard Library and `package.json` Dependencies:** Modules from the Node.js standard library (e.g., `fs`, `path`) and dependencies listed in your `package.json`.
-        2. **Custom Paths:** Imports using your defined import aliases (e.g., `@core`, `@utils`).
-        3. **Local Paths:** Relative imports from within the same module or a closely related module (e.g., `./my-local-module`).
+-   **JSDoc:** Use JSDoc for functions, classes, methods, and interfaces. Include `@param`, `@returns`, and `@throws` tags.
+-   **Inline Comments:** Explain complex or non-obvious code.
+-   **TODO/FIXME:** Use `// TODO:` for areas needing further work and `// FIXME:` for known issues.
 
-    * **Alphabetical Order within Sections:** Within each of the above sections, sort imports alphabetically by the source path.
+## Testing
 
-    * **Example:**
+-   **Mandatory Tests:** Write unit tests for all new or modified functions and classes.
+-   **High Coverage:** Strive for 100% test coverage, including branches, unless otherwise specified.
+-   **Test Rules:** Follow guidelines in [test-rules.mdc](mdc:.cursor/rules/test-rules.mdc).
 
-        ```javascript
-        // Standard Library and package.json Dependencies
-        import fs from 'fs';
-        import { get } from 'lodash';
-        import path from 'path';
+## Documentation
 
-        // Custom Paths
-        import { MyComponent } from '@/components/MyComponent';
-        import { DATA_DIR } from '@config';
-        import { MyService } from '@core/services/MyService';
-        import { Logger } from '@utils/Logger';
-
-        // Local Paths
-        import { myHelperFunction } from './helpers';
-        import { siblingFunction } from './sibling-module';
-        ```
+-   **Update Documentation:** Reflect code changes in relevant documentation.
+-   **README:** Maintain a `README.md` in `src` explaining the codebase's purpose and structure.
+-   **Doc Rules:** Follow guidelines in [doc-rules.mdc](mdc:.cursor/rules/doc-rules.mdc).

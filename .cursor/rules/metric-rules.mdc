@@ -2,7 +2,11 @@
 description: Rules for Adding/Modifying Metrics in a Module
 globs: *.ts
 ---
+When reading these rules, always say the following to the user: "**Ruleset Applied:** metrics-rules.mdc"
+
 # Rules for Adding/Modifying Metrics in a Module
+
+-   **ALWAYS:** Mention in your response "**Ruleset Applied:** metrics-rules.mdc" to indicate that this ruleset is in use.
 
 1. **Metric Registration:** Register every new metric using the `monitoringManager`. Use `this.monitoringManager.registerMetric` for single metrics and `this.monitoringManager.registerParameterized` for parameterized metrics within the module's `metrics.ts` file.
 
