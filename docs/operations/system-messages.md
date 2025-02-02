@@ -473,8 +473,8 @@ response:system.topic.subscriptions:1.0.0:abc123def-4567-89ab-cdef-123456789abc:
             "action": "publish",
             "topic": "events.alerts",
             "subscribers": [
-                { "serviceId": "service1-uuid", "priority": 0 },
-                { "serviceId": "service2-uuid", "priority": 0 }
+                { "serviceId": "service1-uuid" },
+                { "serviceId": "service2-uuid" }
             ]
         },
         {

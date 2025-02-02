@@ -588,8 +588,8 @@ describe('SubscriptionManager', () => {
                         action: ActionType.PUBLISH,
                         topic: 'alpha.updates',
                         subscribers: [
-                            { serviceId: 'service1', priority: 0 },
-                            { serviceId: 'service2', priority: 0 }
+                            { serviceId: 'service1' },
+                            { serviceId: 'service2' }
                         ]
                     },
                     {
@@ -611,7 +611,7 @@ describe('SubscriptionManager', () => {
                         action: ActionType.PUBLISH,
                         topic: 'zebra.events',
                         subscribers: [
-                            { serviceId: 'service3', priority: 0 }
+                            { serviceId: 'service3' }
                         ]
                     }
                 ]);
@@ -643,8 +643,8 @@ describe('SubscriptionManager', () => {
                         action: ActionType.PUBLISH,
                         topic: 'alpha.updates',
                         subscribers: [
-                            { serviceId: 'service1', priority: 0 },
-                            { serviceId: 'service2', priority: 0 }
+                            { serviceId: 'service1' },
+                            { serviceId: 'service2' }
                         ]
                     }
                 ]);
@@ -692,7 +692,7 @@ describe('SubscriptionManager', () => {
                         action: ActionType.PUBLISH,
                         topic: 'same.topic',
                         subscribers: [
-                            { serviceId: 'service1', priority: 0 }
+                            { serviceId: 'service1' }
                         ]
                     },
                     {
