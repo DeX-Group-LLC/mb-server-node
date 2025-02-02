@@ -1,6 +1,7 @@
 /**
  * @file Defines a topic trie data structure for efficient subscription matching.
  */
+import { TopicUtils } from "@core/utils";
 
 /**
  * Interface for a collection that can store and iterate over leaves.
@@ -77,26 +78,16 @@ interface TrieNode<T, C extends LeafCollection<T>> {
 }
 
 /**
- * Regular expression to validate topic names.
- *
- * Topics are limited to 5 levels deep and can contain alphanumeric characters and the '+' wildcard.
- * The '#' wildcard is only allowed as the last segment.
- *
- * @private
- */
-const TOPIC_REGEX = /^([a-zA-Z][a-zA-Z0-9]*|\+)(\.([a-zA-Z][a-zA-Z0-9]*|\+)){0,3}(\.([a-zA-Z][a-zA-Z0-9]*|\+|#))?$/; // Limit to 5 levels deep
-
-/**
  * Topic trie data structure for efficient matching of topics against subscriptions.
  * Supports MQTT-style wildcards:
  *  - `+`: Matches a single level.
  *  - `#`: Matches zero or more levels, and must be the last level.
  *
- *  The trie is parameterized by:
- *  - `T`: The type of the leaf (subscriber) stored in the trie.
- *  - `C`: The type of the `LeafCollection` used to store leaves. This allows for different
- *         collection implementations (e.g., `SetLeafCollection` for unique subscribers,
- *         `ArrayLeafCollection` for ordered or non-unique subscribers).
+ * The trie is parameterized by:
+ * - `T`: The type of the leaf (subscriber) stored in the trie.
+ * - `C`: The type of the `LeafCollection` used to store leaves. This allows for different
+ *        collection implementations (e.g., `SetLeafCollection` for unique subscribers,
+ *        `ArrayLeafCollection` for ordered or non-unique subscribers).
  *
  * @template T The type of the leaf (subscriber) stored in the trie.
  * @template C The type of LeafCollection used to store leaves in the trie nodes.
@@ -158,7 +149,7 @@ export class TopicTrie<T, C extends LeafCollection<T>> {
      * @throws {Error} If the topic is invalid according to `TOPIC_REGEX`.
      */
     public set(topic: string, leaf: T): void {
-        if (!TOPIC_REGEX.test(topic)) throw new Error('Invalid topic name');
+        if (!TopicUtils.isValidSubscription(topic)) throw new Error('Invalid topic name');
         const collection = this.getOrCreateCollection(topic);
         collection.add(leaf);
     }
@@ -189,7 +180,7 @@ export class TopicTrie<T, C extends LeafCollection<T>> {
      * @throws {Error} If the topic is invalid according to `TOPIC_REGEX`.
      */
     public *get(topic: string): Generator<T> {
-        if (!TOPIC_REGEX.test(topic)) throw new Error('Invalid topic name');
+        if (!TopicUtils.isValid(topic)) throw new Error('Invalid topic name');
         const returned = new Set<T>(); // Keep track of returned leaves to avoid duplicates
 
         // Iterate through all matching collections and yield their leaves
@@ -216,7 +207,7 @@ export class TopicTrie<T, C extends LeafCollection<T>> {
      * @throws {Error} If the topic is invalid according to `TOPIC_REGEX`.
      */
     public delete(topic: string, leaf: T): boolean {
-        if (!TOPIC_REGEX.test(topic)) throw new Error('Invalid topic name');
+        if (!TopicUtils.isValidSubscription(topic)) throw new Error('Invalid topic name');
         const parts = topic.split('.');
 
         // Track the path we take through the trie for cleanup
@@ -311,7 +302,7 @@ export class TopicTrie<T, C extends LeafCollection<T>> {
      * @throws {Error} If the topic is invalid according to `TOPIC_REGEX`.
      */
     public getOrCreateCollection(topic: string): C {
-        if (!TOPIC_REGEX.test(topic)) throw new Error('Invalid topic name');
+        if (!TopicUtils.isValidSubscription(topic)) throw new Error('Invalid topic name');
         let node = this.root;
         const parts = topic.split('.');
 
@@ -361,7 +352,7 @@ export class TopicTrie<T, C extends LeafCollection<T>> {
      * @throws {Error} If the topic is invalid according to `TOPIC_REGEX`.
      */
     public *getMatchingCollections(topic: string): Generator<C> {
-        if (!TOPIC_REGEX.test(topic)) throw new Error('Invalid topic name');
+        if (!TopicUtils.isValidSubscription(topic)) throw new Error('Invalid topic name');
         const returned = new Set<C>(); // Keep track of returned collections to avoid duplicates
 
         // Start recursive traversal from the root node
@@ -417,6 +408,104 @@ export class TopicTrie<T, C extends LeafCollection<T>> {
             yield node.hashWildcard;
         }
     }
+
+    /**
+     * Returns a generator that yields all [topic, leaf] pairs in the trie.
+     * The pairs are yielded in depth-first order, with exact matches before wildcards.
+     * Each leaf is yielded with the topic pattern it was subscribed to.
+     *
+     * @returns A generator that yields [topic, leaf] tuples.
+     */
+    public *entries(): Generator<[string, T]> {
+        yield* this.entriesRecursive(this.root, []);
+    }
+
+    /**
+     * Recursively traverses the trie to yield all [topic, leaf] pairs.
+     * The order of traversal is:
+     * 1. Regular leaves at current node (exact matches)
+     * 2. Child nodes (deeper exact matches)
+     * 3. Plus wildcard nodes
+     * 4. Hash wildcard leaves
+     *
+     * @private
+     * @param {TrieNode<T, C>} node - The current trie node being examined.
+     * @param {string[]} parts - The topic parts leading to this node.
+     * @returns {Generator<[string, T]>} A generator that yields [topic, leaf] tuples.
+     */
+    private *entriesRecursive(node: TrieNode<T, C>, parts: string[]): Generator<[string, T]> {
+        // 1. Yield regular leaves at this node (exact matches)
+        if (node.leafs.size > 0) {
+            const topic = parts.join('.');
+            for (const leaf of node.leafs) {
+                yield [topic, leaf];
+            }
+        }
+
+        // 2. Recurse into child nodes (deeper exact matches)
+        for (const [part, child] of node.children) {
+            yield* this.entriesRecursive(child, [...parts, part]);
+        }
+
+        // 3. Recurse into plus wildcard node
+        if (node.plusWildcard) {
+            const wildcardParts = [...parts, '+'];
+            yield* this.entriesRecursive(node.plusWildcard, wildcardParts);
+        }
+
+        // 4. Yield hash wildcard leaves
+        if (node.hashWildcard) {
+            const topic = [...parts, '#'].join('.');
+            for (const leaf of node.hashWildcard) {
+                yield [topic, leaf];
+            }
+        }
+    }
+
+    /**
+     * Returns a generator that yields all topic patterns in the trie.
+     * Topics are yielded in depth-first order following the priority:
+     * 1. Regular leaves at current node (exact matches)
+     * 2. Child nodes (deeper exact matches)
+     * 3. Plus wildcard nodes
+     * 4. Hash wildcard leaves
+     *
+     * @returns {Generator<string>} A generator that yields topic pattern strings.
+     */
+    public *keys(): Generator<string> {
+        yield* this.keysRecursive(this.root, []);
+    }
+
+    /**
+     * Recursively traverses the trie to yield all topic patterns.
+     * The order of traversal matches the priority defined in the keys() method.
+     *
+     * @private
+     * @param {TrieNode<T, C>} node - The current trie node being examined.
+     * @param {string[]} parts - The topic parts leading to this node.
+     * @returns {Generator<string>} A generator that yields topic pattern strings.
+     */
+    private *keysRecursive(node: TrieNode<T, C>, parts: string[]): Generator<string> {
+        // 1. Yield topic at this node if it has subscribers (exact matches)
+        if (node.leafs.size > 0) {
+            yield parts.join('.');
+        }
+
+        // 2. Recurse into child nodes (deeper exact matches)
+        for (const [part, child] of node.children) {
+            yield* this.keysRecursive(child, [...parts, part]);
+        }
+
+        // 3. Recurse into plus wildcard node
+        if (node.plusWildcard) {
+            yield* this.keysRecursive(node.plusWildcard, [...parts, '+']);
+        }
+
+        // 4. Yield hash wildcard topic if it exists and has subscribers
+        if (node.hashWildcard && node.hashWildcard.size > 0) {
+            yield [...parts, '#'].join('.');
+        }
+    }
 }
 
 /**
@@ -425,11 +514,13 @@ export class TopicTrie<T, C extends LeafCollection<T>> {
  * Useful when you need to ensure that each subscriber is only added once per topic.
  *
  * @template T The type of the leaf (subscriber) stored in the set.
+ * @implements {LeafCollection<T>}
  */
 export class SetLeafCollection<T> implements LeafCollection<T> {
     /**
      * The underlying Set to store leaves.
      * @private
+     * @type {Set<T>}
      */
     private set: Set<T>;
 

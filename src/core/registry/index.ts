@@ -237,8 +237,8 @@ export class ServiceRegistry {
                 case 'system.topic.list':
                     this.handleTopicList(serviceId, message);
                     break;
-                case 'system.topic.subscribers':
-                    this.handleTopicSubscribers(serviceId, message);
+                case 'system.topic.subscriptions':
+                    this.handleTopicSubscriptions(serviceId, message);
                     break;
                 case 'system.topic.subscribe':
                     this.handleTopicSubscribe(serviceId, message);
@@ -343,9 +343,7 @@ export class ServiceRegistry {
         service.logSubscriptions = { levels, regex: regexObj };
 
         // Subscribe to the log level and regex
-        if (!this.subscriptionManager.isSubscribed(serviceId, 'system.log')) {
-            this.subscriptionManager.subscribe(serviceId, 'system.log');
-        }
+        this.subscriptionManager.subscribePublish(serviceId, 'system.log');
 
         // Send a success response
         const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestId);
@@ -370,12 +368,13 @@ export class ServiceRegistry {
         service.logSubscriptions = { levels: [], regex: undefined };
 
         // Unsubscribe from the log level and regex
-        this.subscriptionManager.unsubscribe(serviceId, `system.log`);
+        this.subscriptionManager.unsubscribePublish(serviceId, 'system.log');
 
         // Send a success response
         const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestId);
         const responsePayload = { status: 'success' };
         this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload, undefined);
+
     }
 
     /**
@@ -450,7 +449,7 @@ export class ServiceRegistry {
         }
 
         // Get the latest subscriptions for the service given:
-        const subscriptions = this.subscriptionManager.getSubscribedInfo(targetServiceId);
+        const subscriptions = this.subscriptionManager.getSubscribedTopics(targetServiceId);
 
         const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestId);
         const responsePayload = { subscriptions };
@@ -494,17 +493,19 @@ export class ServiceRegistry {
     }
 
     /**
-     * Handles a topic subscribers request.
+     * Handles a topic subscriptions request.
      *
-     * @param serviceId The ID of the service requesting the subscribers.
+     * @param serviceId The ID of the service requesting the subscriptions.
      * @param message The message to handle.
      */
-    private handleTopicSubscribers(serviceId: string, message: MessageUtils.Parser): void {
-        const subscribers = this.subscriptionManager.getAllSubscribedTopicWithSubscribers();
+
+    private handleTopicSubscriptions(serviceId: string, message: MessageUtils.Parser): void {
+        const subscriptions = this.subscriptionManager.getAllSubscribedTopics();
         const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestId);
-        const responsePayload = { subscribers };
+        const responsePayload = { subscriptions };
         this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload, undefined);
     }
+
 
     /**
      * Handles a topic subscription request.
@@ -513,12 +514,18 @@ export class ServiceRegistry {
      * @param message The message to handle.
      */
     private handleTopicSubscribe(serviceId: string, message: MessageUtils.Parser): void {
-        const { topic, priority } = message.parsePayload<{ topic?: string, priority?: number }>();
+        const { action, topic, priority = 0 } = message.parsePayload<{ action?: ActionType, topic?: string, priority?: number }>();
+
+        // Check if the action is valid
+        if (!action || typeof action !== 'string' || !Object.values(ActionType).includes(action)) {
+            throw new InvalidRequestError('Missing or invalid action', { action });
+        }
 
         // Check if the topic is valid
         if (!topic || typeof topic !== 'string' || !TopicUtils.isValid(topic)) {
             throw new InvalidRequestError('Missing or invalid topic', { topic });
         }
+
 
         // Only allow subscribing to topics that are not restricted system topics
         if (topic.startsWith('system.') && !SUBSCRIBABLE_SYSTEM_TOPICS.has(topic)) {
@@ -530,10 +537,17 @@ export class ServiceRegistry {
             throw new InvalidRequestError('Invalid priority', { priority });
         }
 
-        const success = this.subscriptionManager.subscribe(serviceId, topic, priority);
+        let success = false;
+        if (action === ActionType.PUBLISH) {
+            success = this.subscriptionManager.subscribePublish(serviceId, topic);
+        } else if (action === ActionType.REQUEST) {
+            success = this.subscriptionManager.subscribeRequest(serviceId, topic, priority);
+        }
+
         const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestId);
         const responsePayload = { status: success ? 'success' : 'failure' };
         this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload, undefined);
+
     }
 
     /**
@@ -543,18 +557,31 @@ export class ServiceRegistry {
      * @param message The message to handle.
      */
     private handleTopicUnsubscribe(serviceId: string, message: MessageUtils.Parser): void {
-        const { topic } = message.parsePayload<{ topic?: string }>();
+        const { action, topic } = message.parsePayload<{ action?: ActionType, topic?: string }>();
 
+        // Check if the action is valid
+        if (!action || typeof action !== 'string' || !Object.values(ActionType).includes(action)) {
+            throw new InvalidRequestError('Missing or invalid action', { action });
+        }
+
+        // Check if the topic is valid
         if (!topic || typeof topic !== 'string' || !TopicUtils.isValid(topic)) {
             throw new InvalidRequestError('Missing or invalid topic', { topic });
         }
+
 
         // Only allow unsubscribing from topics that are not system topics, or system.service.register, or system.topic.subscribe
         if (topic.startsWith('system.') && topic !== 'system.service.register' && topic !== 'system.topic.subscribe') {
             throw new InvalidRequestError('Unable to unsubscribe from restricted topic', { topic });
         }
 
-        const success = this.subscriptionManager.unsubscribe(serviceId, topic);
+        let success = false;
+        if (action === ActionType.PUBLISH) {
+            success = this.subscriptionManager.unsubscribePublish(serviceId, topic);
+        } else if (action === ActionType.REQUEST) {
+            success = this.subscriptionManager.unsubscribeRequest(serviceId, topic);
+        }
+
         const responseHeader = MessageUtils.toBrokerHeader(message.header, ActionType.RESPONSE, message.header.requestId);
         const responsePayload = { status: success ? 'success' : 'failure' };
         this.connectionManager.sendMessage(serviceId, responseHeader, responsePayload, undefined);

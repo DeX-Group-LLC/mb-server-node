@@ -129,8 +129,18 @@ action:topic:version:requestId[:parentId][:timeout]\n{"key": "value"}
 Example messages:
 
 ```javascript
-// Subscribe
-'subscribe:events.user.*:1.0:123e4567-e89b-12d3-a456-426614174000\n{}'
+// Subscribe to a topic
+'request:system.topic.subscribe:1.0:123e4567-e89b-12d3-a456-426614174000\n{
+    "action": "publish",
+    "topic": "events.user.+"
+}'
+
+// Subscribe with multi-level wildcard
+'request:system.topic.subscribe:1.0:123e4567-e89b-12d3-a456-426614174000\n{
+    "action": "both",
+    "topic": "events.#",
+    "priority": 0
+}'
 
 // Publish
 'publish:events.user.created:1.0:987fcdeb-51a2-43fe-ba98-765432198765\n{"data": "value"}'
@@ -202,7 +212,10 @@ class TCPClient {
     }
 
     subscribe(topic) {
-        const message = `subscribe:${topic}:1.0:${this.generateUUID()}\n{}`;
+        const message = `request:system.topic.subscribe:1.0:${this.generateUUID()}\n{
+            "action": "publish",
+            "topic": "${topic}"
+        }`;
         this.send(message);
     }
 

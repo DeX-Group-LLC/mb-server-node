@@ -139,7 +139,7 @@ export class MessageRouter {
         }
 
         // Check if the topic has any subscribers
-        const subscribers = this.subscriptionManager.getSubscribers(topic);
+        const subscribers = this.subscriptionManager.getPublishSubscribers(topic);
         if (subscribers.length === 0) {
             logger.debug(`No subscribers for topic: ${topic}`);
             // Send an error response to the requester
@@ -189,7 +189,7 @@ export class MessageRouter {
         }
 
         // Check if the topic has any subscribers
-        const subscribers = this.subscriptionManager.getTopSubscribers(topic);
+        const subscribers = this.subscriptionManager.getTopRequestSubscribers(topic);
         if (!subscribers || subscribers.length === 0) {
             throw new NoRouteFoundError(`No subscribers for topic ${topic}`);
         }

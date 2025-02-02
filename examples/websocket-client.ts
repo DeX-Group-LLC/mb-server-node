@@ -1,5 +1,6 @@
 import { WebSocket } from 'ws';
 import { config } from '../src/config';
+import { randomUUID } from 'crypto';
 
 /**
  * A simple WebSocket client for testing the Message Broker.
@@ -8,7 +9,19 @@ const ws = new WebSocket(`ws://${config.host}:${config.ports.ws}`);
 
 ws.on('open', () => {
     console.log('Connected to Message Broker');
-    ws.send('Hello from client!');
+
+    // Subscribe to a topic
+    const subscribeMessage = {
+        action: "publish",
+        topic: "test.messages"
+    };
+    ws.send(`request:system.topic.subscribe:1.0:${randomUUID()}\n${JSON.stringify(subscribeMessage)}`);
+
+    // Publish a test message
+    const publishMessage = {
+        message: "Hello from client!"
+    };
+    ws.send(`publish:test.messages:1.0:${randomUUID()}\n${JSON.stringify(publishMessage)}`);
 });
 
 ws.on('message', (message: Buffer) => {

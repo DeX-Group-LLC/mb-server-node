@@ -46,17 +46,20 @@ sequenceDiagram
     participant Subscribers
 
     Publisher->>Router: PUBLISH Message
-    Router->>Router: Validate Message
-    Router->>SubscriptionManager: Get Subscribers
-    SubscriptionManager->>Router: Return Subscribers
-    Router->>Subscribers: Distribute Message
+    Router->>Router: Validate Message Format
+    Router->>SubscriptionManager: Get Matching Subscribers
+    Note over SubscriptionManager: Uses Trie-based matching
+    SubscriptionManager->>SubscriptionManager: Match Topic Pattern
+    Note over SubscriptionManager: Handles wildcards (+, #)
+    SubscriptionManager->>Router: Return Prioritized Subscribers
+    Router->>Subscribers: Distribute Message (Priority Order)
 ```
 
 ### 3. Request-Response Flow
 
 1. Client sends REQUEST message
-2. Server validates request
-3. Request routed to service
+2. Server validates request format
+3. Request routed to appropriate service
 4. Service processes request
 5. Response sent back to client
 
@@ -66,12 +69,16 @@ sequenceDiagram
     box DarkBlue Message Broker
     participant Router
     participant ServiceRegistry
+    participant SubscriptionManager
     end
     participant Service
 
     Client->>Router: REQUEST Message
+    Router->>Router: Validate Message Format
     Router->>ServiceRegistry: Find Service
-    ServiceRegistry->>Router: Return Service
+    ServiceRegistry->>SubscriptionManager: Get Service Subscriptions
+    SubscriptionManager->>ServiceRegistry: Return Matching Service
+    ServiceRegistry->>Router: Return Service Details
     Router->>Service: Forward Request
     Service->>Router: Send Response
     Router->>Client: Forward Response
@@ -84,17 +91,24 @@ System messages are used for:
 - Service registration
 - Health checks
 - Error notifications
+- Subscription management
 
 ```mermaid
 sequenceDiagram
     participant Component
     box DarkBlue Message Broker
     participant SystemManager
+    participant SubscriptionManager
     end
     participant Targets
 
     Component->>SystemManager: System Message
-    SystemManager->>SystemManager: Process Message
+    SystemManager->>SystemManager: Validate Message
+    alt is subscription message
+        SystemManager->>SubscriptionManager: Update Subscriptions
+        SubscriptionManager->>SubscriptionManager: Update Trie
+        SubscriptionManager->>SystemManager: Confirm Update
+    end
     SystemManager->>Targets: Distribute Updates
 ```
 
@@ -102,9 +116,21 @@ sequenceDiagram
 
 All messages go through validation:
 1. Format validation
+   - Header format
+   - Topic format
+   - Action type
 2. Size limits
+   - Message size
+   - Topic length
+   - Payload size
 3. Topic pattern validation
+   - Segment format
+   - Wildcard placement
+   - Maximum depth
 4. Rate limiting checks
+   - Global limits
+   - Service limits
+   - Connection limits
 
 ## Error Handling
 

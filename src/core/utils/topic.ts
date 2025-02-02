@@ -1,4 +1,5 @@
 const TOPIC_NAME_REGEX = /^[a-zA-Z][a-zA-Z0-9]*(\.[a-zA-Z][a-zA-Z0-9]*){0,4}$/; // Limit to 5 levels deep
+const TOPIC_SUBSCRIPTION_NAME_REGEX = /^([a-zA-Z][a-zA-Z0-9]*|\+|#$)(\.([a-zA-Z][a-zA-Z0-9]*|\+|#$)){0,4}$/; // Limit to 5 levels deep
 
 export const MAX_TOPIC_LENGTH = 255;
 
@@ -21,6 +22,27 @@ export function isValid(name: string): boolean {
     if (!name || typeof name !== 'string' || name.length > MAX_TOPIC_LENGTH) return false;
     return TOPIC_NAME_REGEX.test(name);
 }
+
+/**
+ * Validates a topic subscription name against the defined rules.
+ *
+ * A valid topic subscription name must:
+ * - Be a string with a maximum length of 255 characters.
+ * - Contain only lowercase or uppercase letters, numbers, dots (.), plus (+), or hash (#).
+ * - Follow a hierarchical structure using dots as separators (e.g., 'baggage.events.europe').
+ * - Have a maximum depth of 5 levels.
+ * - Not contain consecutive dots (e.g., 'a..b' is invalid).
+ * - Not start or end with a dot.
+ *
+ * @param name The topic subscription name to validate.
+ * @returns True if the topic subscription name is valid, false otherwise.
+ */
+export function isValidSubscription(name: string): boolean {
+    if (!name || typeof name !== 'string' || name.length > MAX_TOPIC_LENGTH) return false;
+    return TOPIC_SUBSCRIPTION_NAME_REGEX.test(name);
+}
+
+
 
 /**
  * Converts a topic name to its canonical form (lowercase).

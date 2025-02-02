@@ -27,10 +27,12 @@ The `action` field defines the type of message:
 
 Topics follow a hierarchical structure using dots (.) as separators. A valid topic must:
 - Start with a letter (a-z or A-Z)
-- Contain only letters (a-z, A-Z) and numbers (0-9)
+- Contain only letters (a-z, A-Z) and numbers (0-9) in each segment
 - Use dots (.) as level separators
 - Have a maximum of 5 levels deep
 - Not exceed 255 characters in total length
+- Not contain consecutive dots
+- Not start or end with a dot
 
 Examples:
 ```
@@ -45,21 +47,24 @@ service.status.region.zone.node
 2. Each segment must start with a letter
 3. Only letters and numbers allowed in segments
 4. Maximum 5 levels deep
-5. No consecutive dots
-6. No leading or trailing dots
-7. Case-insensitive (automatically converted to lowercase)
+5. Maximum total length of 255 characters
+6. No consecutive dots allowed
+7. No leading or trailing dots
 
-### Topic Patterns
-The system supports wildcard patterns for topic matching:
-- `*`: Matches any sequence of characters within a single level
-- `>`: Matches any sequence of characters across multiple levels (must be at end)
+### Topic Subscription Rules
+For topic subscriptions, additional wildcards are supported:
+- `+` (plus) wildcard: Matches exactly one topic level
+- `#` (hash) wildcard: Matches zero or more topic levels, must be the last character
 
-Examples:
+Examples of valid subscription patterns:
 ```
-baggage.events.*      # Matches: baggage.events.europe, baggage.events.asia
-baggage.*            # Matches: baggage.events, baggage.updates
-baggage.>           # Matches: baggage.events.europe, baggage.updates.status
+events.+          # Matches any second-level under events
+events.#          # Matches all events topics at any level
++.alerts          # Matches any first-level with alerts
+system.+.status   # Matches any service status in system
 ```
+
+Note: Wildcards are only valid in subscription patterns, not in regular topic names.
 
 ## Version Format
 

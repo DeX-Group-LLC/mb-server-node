@@ -15,8 +15,8 @@ System messages in MB Server Node are special messages used for internal communi
 | [`system.service.subscriptions`](#service-subscriptions-systemservicesubscriptions) | REQUEST | Get subscription information for a service |
 | [`system.topic.list`](#list-topics-systemtopiclist) | REQUEST | List all subscribed topics in the broker |
 | [`system.topic.subscribe`](#subscribe-systemtopicsubscribe) | REQUEST | Subscribe to a topic with a priority level |
-| [`system.topic.subscribers`](#topic-subscribers-systemtopicsubscribers) | REQUEST | Get mapping of topics to their subscribers |
 | [`system.topic.unsubscribe`](#unsubscribe-systemtopicunsubscribe) | REQUEST | Unsubscribe from a topic |
+| [`system.topic.subscriptions`](#topic-subscriptions-systemtopicsubscriptions) | REQUEST | Get detailed topic subscriptions |
 
 ## Overview
 
@@ -247,7 +247,7 @@ response:system.service.subscriptions:1.0.0:abc123def-4567-89ab-cdef-123456789ab
 ### 2. Topic Management
 
 #### Subscribe (`system.topic.subscribe`)
-The topic subscribe message allows services to subscribe to specific topics for receiving messages. It supports priority levels to control message delivery order when multiple services are subscribed to the same topic.
+The topic subscribe message allows services to subscribe to specific topics for receiving messages. It supports priority levels for request/response patterns to control message delivery order when multiple services are subscribed to the same topic.
 
 **Use Cases:**
 - Setting up message routing
@@ -259,24 +259,32 @@ The topic subscribe message allows services to subscribe to specific topics for 
 **Implementation Notes:**
 - Topics must follow valid format (letters, numbers, dots)
 - Maximum 5 levels in topic hierarchy
-- Priority affects message delivery order
+- Priority only applies to request/response subscriptions
+- Publish subscriptions don't use priority (messages sent to all subscribers)
+- Action type must be specified (publish, request, or both)
 - Some system topics are restricted
-- Duplicate subscriptions update priority
+- Duplicate subscriptions update existing subscription
+- Supports wildcard patterns (+ and #)
+- Uses efficient trie-based matching
+- Wildcards only valid in subscription patterns
 
 **Possible Errors:**
 | Error Type | Description | Cause | Recovery |
 |------------|-------------|-------|----------|
 | ServiceUnavailableError | Service not found | Service not registered | Register service first |
 | InvalidRequestError | Invalid topic format | Topic doesn't match pattern | Fix topic format |
-| InvalidRequestError | Invalid priority | Non-numeric priority value | Use valid number |
+| InvalidRequestError | Invalid priority | Non-numeric priority value or used with publish action | Use valid number for request actions only |
 | InvalidRequestError | Restricted topic | Attempting to subscribe to protected system topic | Use allowed topic |
-| InvalidRequestError | Missing fields | Topic or priority not provided | Include all fields |
+| InvalidRequestError | Missing fields | Required fields not provided | Include all fields |
+| InvalidRequestError | Invalid wildcard | Wildcard in wrong position | Fix wildcard placement |
+| InvalidRequestError | Missing action | Action type not specified | Specify publish, request, or both |
 
 **Request Payload:**
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| topic | string | Yes | Topic name |
-| priority | number | Yes | Numeric priority |
+| action | string | Yes | Subscription action type: "publish", "request", or "both" |
+| topic | string | Yes | Topic name or pattern with optional wildcards (+, #) |
+| priority | number | Only for request/both | Numeric priority for request message delivery order |
 
 **Response Payload:**
 | Field | Type | Required | Description |
@@ -285,11 +293,27 @@ The topic subscribe message allows services to subscribe to specific topics for 
 
 Example:
 ```javascript
-// Request
+// Request - Publish subscription (no priority needed)
 request:system.topic.subscribe:1.0.0:123e4567-e89b-12d3-a456-426614174000
 {
-    "topic": "my.topic",    // Required, valid topic name
-    "priority": 0          // Required, numeric priority
+    "action": "publish",
+    "topic": "my.topic"
+}
+
+// Request - Request subscription with priority
+request:system.topic.subscribe:1.0.0:123e4567-e89b-12d3-a456-426614174000
+{
+    "action": "request",
+    "topic": "my.service.action",
+    "priority": 0
+}
+
+// Request - Both actions with wildcards
+request:system.topic.subscribe:1.0.0:123e4567-e89b-12d3-a456-426614174000
+{
+    "action": "both",
+    "topic": "events.+.alerts",  // Single-level wildcard
+    "priority": 1               // Priority for request handling
 }
 
 // Response
@@ -391,8 +415,8 @@ response:system.topic.list:1.0.0:abc123def-4567-89ab-cdef-123456789abc:123e4567-
 {"topics": ["topic1", "topic2"], "status": "success"}
 ```
 
-#### Topic Subscribers (`system.topic.subscribers`)
-The topic subscribers message provides a detailed mapping of all topics to their current subscribers. This gives a complete picture of the message routing configuration in the system.
+#### Topic Subscriptions (`system.topic.subscriptions`)
+The topic subscriptions message provides a detailed view of all topics and their subscribers in the system, including the action type (PUBLISH/REQUEST) and priority information for each subscription. This gives a complete picture of the message routing configuration.
 
 **Use Cases:**
 - Debugging message routing
@@ -400,13 +424,17 @@ The topic subscribers message provides a detailed mapping of all topics to their
 - System monitoring
 - Subscription verification
 - Service dependency mapping
+- Priority configuration auditing
 
 **Implementation Notes:**
-- Returns mapping of topics to arrays of service IDs
+- Returns an array of topic subscription objects
+- Each topic includes its action type (PUBLISH/REQUEST)
+- Lists all subscribers for each topic with their priorities
+- PUBLISH subscribers have default priority of 0
+- REQUEST subscribers maintain their configured priority
+- Topics are sorted alphabetically
 - Only includes topics with active subscribers
 - Service IDs are in UUID4 format
-- Includes system topic subscriptions
-- Order of services in arrays is not significant
 
 **Possible Errors:**
 | Error Type | Description | Cause | Recovery |
@@ -423,22 +451,41 @@ The topic subscribers message provides a detailed mapping of all topics to their
 **Response Payload:**
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| subscribers | object | Yes | Mapping of topics to subscriber services |
+| subscriptions | array | Yes | Array of topic subscription objects |
+| subscriptions[].action | string | Yes | "publish" or "request" |
+| subscriptions[].topic | string | Yes | Topic name |
+| subscriptions[].subscribers | array | Yes | Array of subscriber objects |
+| subscriptions[].subscribers[].serviceId | string | Yes | UUID of subscribed service |
+| subscriptions[].subscribers[].priority | number | No | Priority level (not included for publish) |
 | status | string | Yes | "success" or "failure" |
 
 Example:
 ```javascript
 // Request
-request:system.topic.subscribers:1.0.0:123e4567-e89b-12d3-a456-426614174000
+request:system.topic.subscriptions:1.0.0:123e4567-e89b-12d3-a456-426614174000
 {}
 
 // Response
-response:system.topic.subscribers:1.0.0:abc123def-4567-89ab-cdef-123456789abc:123e4567-e89b-12d3-a456-426614174000
+response:system.topic.subscriptions:1.0.0:abc123def-4567-89ab-cdef-123456789abc:123e4567-e89b-12d3-a456-426614174000
 {
-    "subscribers": {
-        "topic1": ["service1", "service2"],
-        "topic2": ["service3"]
-    },
+    "subscriptions": [
+        {
+            "action": "publish",
+            "topic": "events.alerts",
+            "subscribers": [
+                { "serviceId": "service1-uuid", "priority": 0 },
+                { "serviceId": "service2-uuid", "priority": 0 }
+            ]
+        },
+        {
+            "action": "request",
+            "topic": "system.status",
+            "subscribers": [
+                { "serviceId": "service3-uuid", "priority": 2 },
+                { "serviceId": "service4-uuid", "priority": 1 }
+            ]
+        }
+    ],
     "status": "success"
 }
 ```
@@ -615,11 +662,15 @@ response:system.metrics:1.0.0:abc123def-4567-89ab-cdef-123456789abc:123e4567-e89
      - `system.topic.subscribe`
      - `system.topic.unsubscribe`
    - Other system topics are protected
+   - Wildcards (+, #) only valid in subscription patterns
+   - Hash wildcard (#) must be the last character
+   - Plus wildcard (+) matches exactly one level
 
 3. **Error Handling**
    - Service not found: `ServiceUnavailableError`
    - Invalid request format: `InvalidRequestError`
    - Unknown topic: `TopicNotSupportedError`
+   - Invalid wildcard: `InvalidRequestError`
    - All errors increment service error rate metric
 
 4. **Response Format**
@@ -635,18 +686,28 @@ response:system.metrics:1.0.0:abc123def-4567-89ab-cdef-123456789abc:123e4567-e89
    - Implement proper error handling
    - Validate message payloads
    - Log important events
+   - Use appropriate wildcards sparingly
 
 2. **Security**
    - Validate service permissions
    - Check topic restrictions
    - Implement rate limiting
    - Monitor system usage
+   - Validate wildcard patterns
 
 3. **Performance**
    - Process messages efficiently
    - Implement timeouts
    - Handle backpressure
    - Monitor metrics
+   - Consider wildcard impact
+
+4. **Topic Design**
+   - Use clear hierarchical structure
+   - Follow naming conventions
+   - Plan for scalability
+   - Use wildcards judiciously
+   - Consider message routing patterns
 
 ## Related Topics
 - [Heartbeat System](./heartbeat.md)

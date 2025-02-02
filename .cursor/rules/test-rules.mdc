@@ -31,3 +31,14 @@ When reading these rules, always say the following to the user: "**Ruleset Appli
 -   **Inline Comments:** Use inline comments within test cases to:
     -   Explain the purpose of each assertion (`expect`).
     -   Clarify any complex or non-obvious test logic.
+
+## Improving Existing Test Coverage (Common Request)
+
+-   **Incremental:** Improve coverage function by function or class by class.
+-   **Coverage Reports:** Use reports to find uncovered lines.
+-   **Systematic Line-by-Line:** Address uncovered lines systematically:
+    1.  Analyze a line.
+    2.  Write a test for it.
+    3.  Run tests to confirm coverage. Run specifically that file only.
+    4.  If not covered, revise test & re-test. Undo any revisions that didn't make an impact.
+    Test each change before moving on.

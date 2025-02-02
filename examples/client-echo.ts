@@ -65,6 +65,7 @@ if (requester) {
         if (ENABLE_LISTENER) {
             // Subscribe to test.trigger.publish
             requester.send(createMessage(ActionType.REQUEST, 'system.topic.subscribe', {
+                action: "request",
                 topic: 'test.end',
                 priority: 2
             }, randomUUID()));
@@ -98,6 +99,7 @@ if (responder) {
 
         // Subscribe to test.message
         responder.write(frameTcpMessage(createMessage(ActionType.REQUEST, 'system.topic.subscribe', {
+            action: "request",
             topic: 'test.message',
             priority: 1
         }, randomUUID())));
@@ -105,6 +107,7 @@ if (responder) {
         if (ENABLE_LISTENER) {
             // Subscribe to test.trigger.publish
             responder.write(frameTcpMessage(createMessage(ActionType.REQUEST, 'system.topic.subscribe', {
+                action: "request",
                 topic: 'test.end',
                 priority: 0
             }, randomUUID())));
@@ -178,10 +181,12 @@ if (listener) {
 
         // Subscribe to both trigger topics
         listener.send(createMessage(ActionType.REQUEST, 'system.topic.subscribe', {
+            action: "publish",
             topic: 'test.trigger.publish',
             priority: 1
         }, randomUUID()));
         listener.send(createMessage(ActionType.REQUEST, 'system.topic.subscribe', {
+            action: "request",
             topic: 'test.trigger.request',
             priority: 1
         }, randomUUID()));

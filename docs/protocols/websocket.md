@@ -129,7 +129,10 @@ class WSClient {
     }
 
     subscribe(topic) {
-        const message = `subscribe:${topic}:1.0:${this.generateUUID()}\n{}`;
+        const message = `request:system.topic.subscribe:1.0:${this.generateUUID()}\n{
+            "action": "publish",
+            "topic": "${topic}"
+        }`;
         this.send(message);
     }
 
@@ -153,7 +156,10 @@ ws.onopen = () => {
     console.log('Connected to MB Server');
 
     // Subscribe to a topic
-    ws.send('subscribe:events.user.*:1.0:123e4567-e89b-12d3-a456-426614174000\n{}');
+    ws.send('request:system.topic.subscribe:1.0:123e4567-e89b-12d3-a456-426614174000\n{
+        "action": "publish",
+        "topic": "events.user.+"
+    }');
 
     // Publish a message
     ws.send('publish:events.user.created:1.0:987fcdeb-51a2-43fe-ba98-765432198765\n{"message": "Hello"}');

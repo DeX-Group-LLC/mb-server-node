@@ -60,10 +60,12 @@ describe('MessageRouter', () => {
         // Create mock SubscriptionManager with basic implementations
         mockSubscriptionManager = {
             // Mock subscriber retrieval methods
-            getSubscribers: jest.fn().mockReturnValue([]),
-            getTopSubscribers: jest.fn().mockReturnValue([]),
-            subscribe: jest.fn(),
-            unsubscribe: jest.fn()
+            getPublishSubscribers: jest.fn().mockReturnValue([]),
+            getTopRequestSubscribers: jest.fn().mockReturnValue([]),
+            subscribePublish: jest.fn(),
+            subscribeRequest: jest.fn(),
+            unsubscribePublish: jest.fn(),
+            unsubscribeRequest: jest.fn()
         } as unknown as jest.Mocked<SubscriptionManager>;
 
         // Create mock ServiceRegistry with basic implementations
@@ -123,7 +125,7 @@ describe('MessageRouter', () => {
             expect(mockServiceRegistry.handleSystemMessage).toHaveBeenCalledWith('service1', parser);
 
             // Verify no other handlers were called
-            expect(mockSubscriptionManager.getSubscribers).not.toHaveBeenCalled();
+            expect(mockSubscriptionManager.getPublishSubscribers).not.toHaveBeenCalled();
             expect(mockConnectionManager.sendMessage).not.toHaveBeenCalled();
         });
 
@@ -143,7 +145,7 @@ describe('MessageRouter', () => {
             const parser = new Parser(Buffer.from(message));
 
             // Mock subscribers for the topic
-            mockSubscriptionManager.getSubscribers.mockReturnValueOnce(['service2']);
+            mockSubscriptionManager.getPublishSubscribers.mockReturnValueOnce(['service2']);
 
             // Route the message
             messageRouter.routeMessage('service1', parser);
@@ -178,7 +180,7 @@ describe('MessageRouter', () => {
             const parser = new Parser(Buffer.from(message));
 
             // Mock subscribers for the topic
-            mockSubscriptionManager.getTopSubscribers.mockReturnValueOnce(['service2']);
+            mockSubscriptionManager.getTopRequestSubscribers.mockReturnValueOnce(['service2']);
 
             // Route the message
             messageRouter.routeMessage('service1', parser);
@@ -265,8 +267,8 @@ describe('MessageRouter', () => {
             const message = serialize(header, payload);
             const parser = new Parser(Buffer.from(message));
 
-            // Mock getSubscribers to throw an error
-            mockSubscriptionManager.getSubscribers.mockImplementationOnce(() => {
+            // Mock getPublishSubscribers to throw an error
+            mockSubscriptionManager.getPublishSubscribers.mockImplementationOnce(() => {
                 throw new Error('Test error');
             });
 
@@ -299,8 +301,8 @@ describe('MessageRouter', () => {
             const message = serialize(header, payload);
             const parser = new Parser(Buffer.from(message));
 
-            // Mock getTopSubscribers to throw an error
-            mockSubscriptionManager.getTopSubscribers.mockImplementationOnce(() => {
+            // Mock getTopRequestSubscribers to throw an error
+            mockSubscriptionManager.getTopRequestSubscribers.mockImplementationOnce(() => {
                 throw new Error('Test error');
             });
 
@@ -401,8 +403,8 @@ describe('MessageRouter', () => {
             const message = serialize(header, payload);
             const parser = new Parser(Buffer.from(message));
 
-            // Mock getSubscribers to return empty array
-            mockSubscriptionManager.getSubscribers.mockReturnValueOnce([]);
+            // Mock getPublishSubscribers to return empty array
+            mockSubscriptionManager.getPublishSubscribers.mockReturnValueOnce([]);
 
             // Get initial metric values
             const metrics = (messageRouter as any).metrics;
@@ -447,7 +449,7 @@ describe('MessageRouter', () => {
             const parser = new Parser(Buffer.from(message));
 
             // Mock subscribers for the topic
-            mockSubscriptionManager.getSubscribers.mockReturnValueOnce(['service2']);
+            mockSubscriptionManager.getPublishSubscribers.mockReturnValueOnce(['service2']);
 
             // Route the message
             messageRouter.routeMessage('service1', parser);
@@ -491,8 +493,8 @@ describe('MessageRouter', () => {
             const message = serialize(header, payload);
             const parser = new Parser(Buffer.from(message));
 
-            // Mock getTopSubscribers to return empty array
-            mockSubscriptionManager.getTopSubscribers.mockReturnValueOnce([]);
+            // Mock getTopRequestSubscribers to return empty array
+            mockSubscriptionManager.getTopRequestSubscribers.mockReturnValueOnce([]);
 
             // Get initial metric values
             const metrics = (messageRouter as any).metrics;
@@ -533,7 +535,7 @@ describe('MessageRouter', () => {
             expect(mockServiceRegistry.handleSystemMessage).toHaveBeenCalledWith('service1', parser);
 
             // Verify no other handlers were called
-            expect(mockSubscriptionManager.getTopSubscribers).not.toHaveBeenCalled();
+            expect(mockSubscriptionManager.getTopRequestSubscribers).not.toHaveBeenCalled();
             expect(mockConnectionManager.sendMessage).not.toHaveBeenCalled();
         });
 
@@ -558,7 +560,7 @@ describe('MessageRouter', () => {
             const parser = new Parser(Buffer.from(message));
 
             // Mock subscribers for the topic
-            mockSubscriptionManager.getTopSubscribers.mockReturnValueOnce(['service2']);
+            mockSubscriptionManager.getTopRequestSubscribers.mockReturnValueOnce(['service2']);
 
             // Fill up the requests map to max capacity
             const requests = (messageRouter as any).requests;
@@ -797,7 +799,7 @@ describe('MessageRouter', () => {
             const parser = new Parser(Buffer.from(message));
 
             // Mock subscribers for the topic
-            mockSubscriptionManager.getTopSubscribers.mockReturnValueOnce(['service2']);
+            mockSubscriptionManager.getTopRequestSubscribers.mockReturnValueOnce(['service2']);
 
             // Get initial metric values
             const metrics = (messageRouter as any).metrics;
@@ -890,7 +892,7 @@ describe('MessageRouter', () => {
             const parser = new Parser(Buffer.from(message));
 
             // Mock subscribers for the topic
-            mockSubscriptionManager.getTopSubscribers.mockReturnValueOnce(['service2']);
+            mockSubscriptionManager.getTopRequestSubscribers.mockReturnValueOnce(['service2']);
 
             // Route the message
             messageRouter.routeMessage('service1', parser);
@@ -947,7 +949,7 @@ describe('MessageRouter', () => {
             const parser = new Parser(Buffer.from(message));
 
             // Mock subscribers for the topic
-            mockSubscriptionManager.getTopSubscribers.mockReturnValueOnce(['service2']);
+            mockSubscriptionManager.getTopRequestSubscribers.mockReturnValueOnce(['service2']);
 
             // Route the message
             messageRouter.routeMessage('service1', parser);

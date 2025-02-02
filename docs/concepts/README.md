@@ -15,15 +15,52 @@ Topics are hierarchical strings separated by dots (e.g., `"company.department.se
 Example topic patterns:
 - `"weather.updates"` - Weather update messages
 - `"user.profile.changed"` - User profile change events
-- `"orders.*.processed"` - All processed orders (wildcard)
+- `"orders.+.processed"` - Any processed orders (single-level wildcard)
 - `"system.#"` - All system messages (multi-level wildcard)
 
 ### Topic Design Best Practices
 
 1. Use hierarchical structure
-2. Keep topics descriptive but concise
-3. Use consistent naming conventions
-4. Plan for scalability
+   - Keep topics organized and logical
+   - Use consistent naming across services
+   - Maximum 5 levels deep
+   - Start each segment with a letter
+
+2. Follow naming conventions
+   - Use descriptive but concise names
+   - Use alphanumeric characters only
+   - Start each segment with a letter
+   - Avoid special characters except dots
+
+3. Plan for scalability
+   - Design for future growth
+   - Consider service boundaries
+   - Allow for new features
+   - Keep hierarchy flexible
+
+4. Subscription patterns
+   - Use `+` for single-level wildcards
+   - Use `#` for multi-level wildcards (at end only)
+   - Be specific to minimize message overhead
+   - Consider performance implications of wildcards
+
+### Topic Validation
+All topics must:
+- Start with a letter
+- Use only letters and numbers in segments
+- Use dots as separators
+- Not exceed 255 characters
+- Have maximum 5 levels
+- Not have consecutive dots
+- Not start/end with dots
+
+### Subscription Management
+The system uses an efficient trie-based subscription matching system that:
+- Supports exact topic matches
+- Handles single-level (+) wildcards
+- Processes multi-level (#) wildcards
+- Maintains subscriber priority order
+- Provides fast lookup performance
 
 ## Message Types
 

@@ -93,7 +93,7 @@ describe('ConnectionManager', () => {
         // Set up subscription manager mock for subscription management
         mockSubscriptionManager = {
             unsubscribeAll: jest.fn(),
-            getSubscribers: jest.fn().mockReturnValue([]),
+            getPublishSubscribers: jest.fn().mockReturnValue([]),
             dispose: jest.fn(),
         } as unknown as jest.Mocked<SubscriptionManager>;
 
@@ -291,7 +291,7 @@ describe('ConnectionManager', () => {
             const serviceId = mockConnection.serviceId;
 
             // Set up subscribers
-            mockSubscriptionManager.getSubscribers.mockReturnValue(['subscriber1', 'subscriber2']);
+            mockSubscriptionManager.getPublishSubscribers.mockReturnValue(['subscriber1', 'subscriber2']);
             const mockSubscriber1 = { ...mockConnection, serviceId: 'subscriber1' };
             const mockSubscriber2 = { ...mockConnection, serviceId: 'subscriber2' };
 
@@ -406,7 +406,7 @@ describe('ConnectionManager', () => {
             const serviceId = mockConnection.serviceId;
 
             // Set up subscribers for system.message
-            mockSubscriptionManager.getSubscribers.mockReturnValue(['subscriber1', 'subscriber2']);
+            mockSubscriptionManager.getPublishSubscribers.mockReturnValue(['subscriber1', 'subscriber2']);
             const mockSubscriber1 = { ...mockConnection, serviceId: 'subscriber1' };
             const mockSubscriber2 = { ...mockConnection, serviceId: 'subscriber2' };
 
@@ -459,7 +459,7 @@ describe('ConnectionManager', () => {
             const serviceId = mockConnection.serviceId;
 
             // Set up subscribers for system.message
-            mockSubscriptionManager.getSubscribers.mockReturnValue(['subscriber1']);
+            mockSubscriptionManager.getPublishSubscribers.mockReturnValue(['subscriber1']);
             const mockSubscriber = { ...mockConnection, serviceId: 'subscriber1' };
 
             // Mock connection for subscriber
@@ -491,7 +491,7 @@ describe('ConnectionManager', () => {
             connectionManager.addConnection(mockConnection);
 
             // Set up subscribers for system.message
-            mockSubscriptionManager.getSubscribers.mockReturnValue(['subscriber1']);
+            mockSubscriptionManager.getPublishSubscribers.mockReturnValue(['subscriber1']);
             const mockSubscriber = { ...mockConnection, serviceId: 'subscriber1' };
 
             // Mock connection for subscriber

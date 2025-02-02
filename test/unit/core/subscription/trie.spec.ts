@@ -1,48 +1,80 @@
 import { TopicTrie, SetLeafCollection, SortedSetLeafCollection } from '@core/subscription/trie';
 
 /**
- * Test suite for TopicTrie class.
- * Tests the implementation of a topic-based publish/subscribe system with wildcard support.
+ * Test suite for the TopicTrie class.
+ * Tests the functionality of topic subscription matching, including exact matches,
+ * plus wildcards, hash wildcards, and various edge cases.
+ * Verifies that the trie correctly handles:
+ * - Exact topic matches
+ * - Plus wildcard (+) matches for single levels
+ * - Hash wildcard (#) matches for multiple levels
+ * - Topic pattern validation
+ * - Subscription management
  */
 describe('TopicTrie', () => {
+    /** The TopicTrie instance used for testing */
     let trie: TopicTrie<string, SetLeafCollection<string>>;
 
+    /**
+     * Set up a fresh TopicTrie instance before each test.
+     * Uses SetLeafCollection to ensure unique subscribers per topic.
+     */
     beforeEach(() => {
         trie = new TopicTrie<string, SetLeafCollection<string>>(() => new SetLeafCollection());
     });
 
     /**
-     * Tests for exact topic matches without wildcards.
-     * Verifies basic subscription and retrieval functionality.
+     * Test suite for exact topic matches.
+     * Verifies that the trie correctly handles exact topic pattern matching
+     * without any wildcards. Tests include:
+     * - Single subscriber exact matches
+     * - Multiple subscribers for the same topic
+     * - Non-matching topics
      */
     describe('exact matches', () => {
         /**
-         * Tests that exact topic matches work correctly.
-         * Verifies that a subscriber can receive messages for the exact topic they subscribed to.
+         * Tests that exact topic patterns match only their specific topics.
+         * Verifies that:
+         * - A subscriber can receive messages for their exact topic
+         * - The subscriber list contains exactly the expected subscriber
          */
         it('should match exact topics', () => {
+            // Add a subscription for testing
             trie.set('device.status', 'subscriber1');
+
+            // Verify exact match returns correct subscriber
             const matches = Array.from(trie.get('device.status'));
             expect(matches).toEqual(['subscriber1']);
         });
 
         /**
-         * Tests that non-matching topics don't return any subscribers.
-         * Verifies that subscribers only receive messages for their exact topic.
+         * Tests that non-exact topic patterns do not match.
+         * Verifies that:
+         * - Similar but non-exact topics don't match
+         * - No subscribers are returned for non-matching topics
          */
         it('should not match non-exact topics', () => {
+            // Add a subscription for testing
             trie.set('device.status', 'subscriber1');
+
+            // Verify non-matching topic returns empty array
             const matches = Array.from(trie.get('device.other'));
             expect(matches).toEqual([]);
         });
 
         /**
-         * Tests that multiple subscribers can subscribe to the same topic.
-         * Verifies that all subscribers receive messages for their topic.
+         * Tests handling of multiple subscribers for the same topic.
+         * Verifies that:
+         * - Multiple subscribers can subscribe to the same topic
+         * - All subscribers are returned when querying the topic
+         * - The order of subscribers is preserved
          */
         it('should handle multiple subscribers for the same topic', () => {
+            // Add multiple subscriptions to the same topic
             trie.set('device.status', 'subscriber1');
             trie.set('device.status', 'subscriber2');
+
+            // Verify all subscribers are returned
             const matches = Array.from(trie.get('device.status'));
             expect(matches).toContain('subscriber1');
             expect(matches).toContain('subscriber2');
@@ -51,52 +83,72 @@ describe('TopicTrie', () => {
     });
 
     /**
-     * Tests for single-level wildcard matches using '+'.
-     * Verifies that '+' correctly matches exactly one topic level.
+     * Test suite for plus wildcard matches.
+     * Verifies that the trie correctly handles the '+' wildcard which matches
+     * exactly one topic level. Tests include:
+     * - Single level matching
+     * - Multiple wildcard patterns
+     * - Invalid wildcard usage
      */
     describe('plus wildcard matches', () => {
         /**
-         * Tests that plus wildcard matches exactly one level.
-         * Verifies that 'device.+.status' matches 'device.test.status'.
+         * Tests that plus wildcards correctly match single levels.
+         * Verifies that:
+         * - '+' matches exactly one topic level
+         * - The match works regardless of the level's value
+         * - The subscriber receives messages for all matching topics
          */
         it('should match single level with plus wildcard', () => {
+            // Add subscription with plus wildcard
             trie.set('device.+.status', 'subscriber1');
+
+            // Verify wildcard matches any single level
             const matches = Array.from(trie.get('device.test.status'));
             expect(matches).toEqual(['subscriber1']);
         });
 
         /**
-         * Tests that plus wildcard doesn't match multiple levels.
-         * Verifies that 'device.+.status' doesn't match 'device.test.more.status'.
+         * Tests that plus wildcards do not match multiple levels.
+         * Verifies that:
+         * - '+' strictly matches one level only
+         * - Topics with more levels don't match
+         * - Topics with fewer levels don't match
          */
         it('should not match multiple levels with plus wildcard', () => {
+            // Add subscription with plus wildcard
             trie.set('device.+.status', 'subscriber1');
+
+            // Verify plus wildcard doesn't match multiple levels
             const matches = Array.from(trie.get('device.test.more.status'));
             expect(matches).toEqual([]);
         });
 
         /**
-         * Tests that multiple plus wildcards in a pattern work correctly.
-         * Verifies that 'device.+.status.+' matches 'device.test.status.active'.
+         * Tests patterns with multiple plus wildcards.
+         * Verifies that:
+         * - Multiple '+' wildcards in a pattern work correctly
+         * - Each '+' matches exactly one level
+         * - The pattern matches only when all wildcards are satisfied
          */
         it('should match multiple plus wildcards', () => {
+            // Add subscription with multiple plus wildcards
             trie.set('device.+.status.+', 'subscriber1');
+
+            // Verify pattern matches with correct number of levels
             const matches = Array.from(trie.get('device.test.status.active'));
             expect(matches).toEqual(['subscriber1']);
         });
     });
 
     /**
-     * Tests for multi-level wildcard matches using '#'.
-     * Verifies that '#' correctly matches zero or more topic levels.
+     * Test suite for hash wildcard matches.
+     * Verifies that the trie correctly handles the '#' wildcard which matches
+     * zero or more topic levels at the end of a pattern.
      */
     describe('hash wildcard matches', () => {
         /**
-         * Tests that hash wildcards match zero or more levels correctly.
-         * This includes:
-         * - Matching at the exact level (zero additional levels)
-         * - Matching one level deeper
-         * - Matching multiple levels deeper
+         * Tests that hash wildcards match zero or more levels.
+         * Verifies that '#' correctly matches any number of levels at the end of a topic.
          */
         it('should match zero or more levels with hash wildcard', () => {
             trie.set('device.#', 'subscriber1');
@@ -503,6 +555,187 @@ describe('TopicTrie', () => {
             const matches = Array.from(trie.get('device'));
             expect(matches).toEqual(['subscriber1']); // Should only appear once
         });
+    });
+
+    /**
+     * Test suite for entries() method.
+     * Verifies that the trie correctly yields all topic-subscriber pairs
+     * in the expected order. Tests include:
+     * - Depth-first traversal order
+     * - Multiple subscribers per topic
+     * - Empty trie handling
+     */
+    describe('entries', () => {
+        /**
+         * Tests that entries are yielded in the correct order.
+         * Verifies that:
+         * - Entries are yielded in depth-first order
+         * - The order follows: exact matches, child nodes, plus wildcards, hash wildcards
+         * - All topic-subscriber pairs are included
+         */
+        it('should yield all topic-leaf pairs in depth-first order', () => {
+            // Add various types of subscriptions
+            trie.getOrCreateCollection('a.b.c').add('leaf1');
+            trie.getOrCreateCollection('a.+.c').add('leaf2');
+            trie.getOrCreateCollection('a.b.#').add('leaf3');
+            trie.getOrCreateCollection('x.y').add('leaf4');
+
+            // Convert entries to array and verify order
+            const entries = Array.from(trie.entries());
+            expect(entries).toEqual([
+                ['a.b.c', 'leaf1'],
+                ['a.b.#', 'leaf3'],
+                ['a.+.c', 'leaf2'],
+                ['x.y', 'leaf4']
+            ]);
+        });
+
+        /**
+         * Tests handling of multiple subscribers at the same topic.
+         * Verifies that:
+         * - All subscribers for a topic are yielded
+         * - The order of subscribers is preserved
+         * - Each topic-subscriber pair is unique
+         */
+        it('should handle multiple leaves at same topic', () => {
+            // Add multiple subscribers to same topic
+            trie.getOrCreateCollection('a.b').add('leaf1');
+            trie.getOrCreateCollection('a.b').add('leaf2');
+
+            // Verify all pairs are yielded correctly
+            const entries = Array.from(trie.entries());
+            expect(entries).toEqual([
+                ['a.b', 'leaf1'],
+                ['a.b', 'leaf2']
+            ]);
+        });
+
+        /**
+         * Tests behavior with an empty trie.
+         * Verifies that:
+         * - An empty trie yields no entries
+         * - The generator completes successfully
+         */
+        it('should handle empty trie', () => {
+            // Verify empty trie yields no entries
+            const entries = Array.from(trie.entries());
+            expect(entries).toEqual([]);
+        });
+    });
+
+    describe('keys', () => {
+        it('should yield all topic patterns in depth-first order', () => {
+            const trie = new TopicTrie<string, SetLeafCollection<string>>(() => new SetLeafCollection());
+
+            // Add various types of subscriptions
+            trie.getOrCreateCollection('a.b.c').add('leaf1');
+            trie.getOrCreateCollection('a.+.c').add('leaf2');
+            trie.getOrCreateCollection('a.b.#').add('leaf3');
+            trie.getOrCreateCollection('x.y').add('leaf4');
+
+            // Convert keys to array for testing
+            const keys = Array.from(trie.keys());
+
+            // Check keys are yielded in correct order
+            expect(keys).toEqual([
+                'a.b.c',
+                'a.b.#',
+                'a.+.c',
+                'x.y'
+            ]);
+        });
+
+        it('should not yield topics with no subscribers', () => {
+            const trie = new TopicTrie<string, SetLeafCollection<string>>(() => new SetLeafCollection());
+
+            // Add and then remove a subscription
+            const collection = trie.getOrCreateCollection('a.b.c');
+            collection.add('leaf1');
+            collection.delete('leaf1');
+
+            const keys = Array.from(trie.keys());
+            expect(keys).toEqual([]);
+        });
+
+        it('should handle empty trie', () => {
+            const trie = new TopicTrie<string, SetLeafCollection<string>>(() => new SetLeafCollection());
+            const keys = Array.from(trie.keys());
+            expect(keys).toEqual([]);
+        });
+    });
+});
+
+/**
+ * Test suite for the SetLeafCollection class.
+ * Tests the functionality of the Set-based leaf collection implementation,
+ * including adding, removing, and iterating over leaves.
+ * Verifies that the collection maintains uniqueness of leaves.
+ */
+describe('SetLeafCollection', () => {
+    /**
+     * Tests the add operation and uniqueness constraint.
+     * Verifies that:
+     * - New leaves are added successfully
+     * - Duplicate leaves are not added
+     * - The size is updated correctly
+     */
+    it('should add leaves and maintain uniqueness', () => {
+        const collection = new SetLeafCollection<string>();
+
+        // Add first leaf and verify size
+        collection.add('leaf1');
+        expect(collection.size).toBe(1);
+
+        // Try to add duplicate and verify size unchanged
+        collection.add('leaf1');
+        expect(collection.size).toBe(1);
+
+        // Add different leaf and verify size increased
+        collection.add('leaf2');
+        expect(collection.size).toBe(2);
+    });
+
+    /**
+     * Tests the delete operation.
+     * Verifies that:
+     * - Existing leaves can be removed
+     * - Non-existent leaves return false
+     * - The size is updated correctly
+     */
+    it('should remove leaves correctly', () => {
+        const collection = new SetLeafCollection<string>();
+
+        // Add and remove leaf
+        collection.add('leaf1');
+        expect(collection.delete('leaf1')).toBe(true);
+        expect(collection.size).toBe(0);
+
+        // Try to remove non-existent leaf
+        expect(collection.delete('leaf2')).toBe(false);
+    });
+
+    /**
+     * Tests the size property.
+     * Verifies that:
+     * - Initial size is 0
+     * - Size increases with additions
+     * - Size decreases with removals
+     * - Size reflects the current number of unique leaves
+     */
+    it('should report correct size', () => {
+        const collection = new SetLeafCollection<string>();
+
+        // Verify initial empty size
+        expect(collection.size).toBe(0);
+
+        // Add leaves and verify size increases
+        collection.add('leaf1');
+        collection.add('leaf2');
+        expect(collection.size).toBe(2);
+
+        // Remove leaf and verify size decreases
+        collection.delete('leaf1');
+        expect(collection.size).toBe(1);
     });
 });
 

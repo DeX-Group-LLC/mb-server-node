@@ -145,7 +145,7 @@ export class ConnectionManager {
         //logger.debug(`Sent message ${header.action}:${header.topic}:${header.version}:${header.requestid ? ':' +header.requestid : ''} to ${serviceId}`, { header, payload, serviceId });
 
         // Notify all subscribers of `system.message`:
-        const subscribers = this.subscriptionManager.getSubscribers('system.message');
+        const subscribers = this.subscriptionManager.getPublishSubscribers('system.message');
         if (subscribers.length) {
             const subHeader = { action: ActionType.PUBLISH, topic: 'system.message', version: '1.0.0' } as BrokerHeader;
             const message = { header, payload } as any as BrokerMessageAudit['message'];
@@ -177,7 +177,7 @@ export class ConnectionManager {
             parser = new MessageUtils.Parser(buffer);
 
             // Notify all subscribers of `system.message`:
-            const subscribers = this.subscriptionManager.getSubscribers('system.message');
+            const subscribers = this.subscriptionManager.getPublishSubscribers('system.message');
             if (subscribers.length) {
                 const subHeader = { action: ActionType.PUBLISH, topic: 'system.message', version: '1.0.0' } as BrokerHeader;
                 const message = { header: parser.header, payload: {} } as any as ClientMessageAudit['message'];

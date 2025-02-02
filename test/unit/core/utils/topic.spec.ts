@@ -358,4 +358,51 @@ describe('TopicUtils', () => {
             expect(TopicUtils.test(' ', '*')).toBe(false);
         });
     });
+
+    describe('isValidSubscription', () => {
+        it('should validate subscription topic names', () => {
+            // Valid subscription patterns
+            expect(TopicUtils.isValidSubscription('baggage.events')).toBe(true);
+            expect(TopicUtils.isValidSubscription('flight.updates')).toBe(true);
+            expect(TopicUtils.isValidSubscription('baggage.events.europe')).toBe(true);
+            expect(TopicUtils.isValidSubscription('a.b.c.d')).toBe(true);
+
+            // Valid wildcard patterns
+            expect(TopicUtils.isValidSubscription('baggage.+')).toBe(true);
+            expect(TopicUtils.isValidSubscription('baggage.#')).toBe(true);
+            expect(TopicUtils.isValidSubscription('+.events')).toBe(true);
+            expect(TopicUtils.isValidSubscription('events.#')).toBe(true);
+        });
+
+        it('should reject empty and invalid inputs', () => {
+            // Empty string is handled directly
+            expect(TopicUtils.isValidSubscription('')).toBe(false);
+            expect(TopicUtils.isValidSubscription(' ')).toBe(false);
+
+            // Invalid characters
+            expect(TopicUtils.isValidSubscription('123.events')).toBe(false);
+            expect(TopicUtils.isValidSubscription('events.123')).toBe(false);
+            expect(TopicUtils.isValidSubscription('events.@special')).toBe(false);
+            expect(TopicUtils.isValidSubscription('special!.events')).toBe(false);
+        });
+
+        it('should reject topics exceeding max length', () => {
+            const longTopic = 'a'.repeat(256);
+            expect(TopicUtils.isValidSubscription(longTopic)).toBe(false);
+        });
+
+        it('should reject invalid subscription patterns', () => {
+            // Invalid dot patterns
+            expect(TopicUtils.isValidSubscription('baggage..events')).toBe(false);
+            expect(TopicUtils.isValidSubscription('.baggage.events')).toBe(false);
+            expect(TopicUtils.isValidSubscription('baggage.events.')).toBe(false);
+
+            // Invalid wildcard patterns
+            expect(TopicUtils.isValidSubscription('#.events')).toBe(false);  // # must be at the end
+            expect(TopicUtils.isValidSubscription('events.#.more')).toBe(false);  // # must be at the end
+
+            // Too many levels
+            expect(TopicUtils.isValidSubscription('a.b.c.d.e.f')).toBe(false);
+        });
+    });
 });

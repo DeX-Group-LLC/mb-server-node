@@ -61,8 +61,11 @@ describe('ServiceRegistry', () => {
         connectionManager = new ConnectionManager(messageRouter, registry, monitoringManager, subscriptionManager) as jest.Mocked<ConnectionManager>;
 
         // Mock subscriptionManager methods
-        subscriptionManager.subscribe = jest.fn().mockReturnValue(true);
+        subscriptionManager.subscribePublish = jest.fn().mockReturnValue(true);
+        subscriptionManager.subscribeRequest = jest.fn().mockReturnValue(true);
         subscriptionManager.unsubscribe = jest.fn().mockReturnValue(true);
+        subscriptionManager.getSubscribedTopics = jest.fn().mockReturnValue([]);
+        subscriptionManager.getAllSubscribedTopics = jest.fn().mockReturnValue([]);
 
         // Assign connection manager to registry
         registry.assignConnectionManager(connectionManager);
@@ -334,10 +337,11 @@ describe('ServiceRegistry', () => {
                 version: '1.0.0'
             }, {
                 topic: 'test.topic',
-                priority: 0
+                priority: 0,
+                action: ActionType.REQUEST
             }));
 
-            expect(subscriptionManager.subscribe).toHaveBeenCalledWith(
+            expect(subscriptionManager.subscribeRequest).toHaveBeenCalledWith(
                 serviceId,
                 'test.topic',
                 0
@@ -348,15 +352,19 @@ describe('ServiceRegistry', () => {
             const serviceId = 'test-service';
             registry.registerService(serviceId);
 
+            // Mock unsubscribeRequest to return true
+            subscriptionManager.unsubscribeRequest = jest.fn().mockReturnValue(true);
+
             registry.handleSystemMessage(serviceId, createMockMessage({
                 action: ActionType.REQUEST,
                 topic: 'system.topic.unsubscribe',
                 version: '1.0.0'
             }, {
-                topic: 'test.topic'
+                topic: 'test.topic',
+                action: ActionType.REQUEST
             }));
 
-            expect(subscriptionManager.unsubscribe).toHaveBeenCalledWith(
+            expect(subscriptionManager.unsubscribeRequest).toHaveBeenCalledWith(
                 serviceId,
                 'test.topic'
             );
@@ -549,9 +557,11 @@ describe('ServiceRegistry', () => {
             const requestId = randomUUID();
             registry.registerService(serviceId);
 
-            // Mock subscriptionManager.getSubscribedInfo
-            const mockSubscriptions = [{ topic: 'test.topic', priority: 0 }];
-            subscriptionManager.getSubscribedInfo = jest.fn().mockReturnValue(mockSubscriptions);
+            // Mock getSubscribedTopics
+            const mockSubscriptions = [
+                { topic: 'test.topic', action: ActionType.REQUEST, priority: 0 }
+            ];
+            subscriptionManager.getSubscribedTopics = jest.fn().mockReturnValue(mockSubscriptions);
 
             registry.handleSystemMessage(serviceId, createMockMessage({
                 action: ActionType.REQUEST,
@@ -562,7 +572,7 @@ describe('ServiceRegistry', () => {
                 serviceId
             }));
 
-            expect(subscriptionManager.getSubscribedInfo).toHaveBeenCalledWith(serviceId);
+            expect(subscriptionManager.getSubscribedTopics).toHaveBeenCalledWith(serviceId);
             expect(connectionManager.sendMessage).toHaveBeenCalledWith(
                 serviceId,
                 expect.objectContaining({
@@ -635,6 +645,9 @@ describe('ServiceRegistry', () => {
             const requestId = randomUUID();
             registry.registerService(serviceId);
 
+            // Mock unsubscribePublish to return true
+            subscriptionManager.unsubscribePublish = jest.fn().mockReturnValue(true);
+
             // First subscribe to logs
             registry.handleSystemMessage(serviceId, createMockMessage({
                 action: ActionType.REQUEST,
@@ -642,7 +655,8 @@ describe('ServiceRegistry', () => {
                 version: '1.0.0'
             }, {
                 levels: ['info', 'error'],
-                regex: 'test.*'
+                regex: 'test.*',
+                action: ActionType.PUBLISH
             }));
 
             // Then unsubscribe
@@ -654,7 +668,7 @@ describe('ServiceRegistry', () => {
             }));
 
             // Verify unsubscription
-            expect(subscriptionManager.unsubscribe).toHaveBeenCalledWith(serviceId, 'system.log');
+            expect(subscriptionManager.unsubscribePublish).toHaveBeenCalledWith(serviceId, 'system.log');
             expect(connectionManager.sendMessage).toHaveBeenLastCalledWith(
                 serviceId,
                 expect.objectContaining({
@@ -753,7 +767,8 @@ describe('ServiceRegistry', () => {
                 version: '1.0.0',
                 requestId
             }, {
-                priority: 0
+                priority: 0,
+                action: ActionType.REQUEST
             }))).toThrow('Missing or invalid topic');
 
             // Test invalid topic
@@ -764,7 +779,8 @@ describe('ServiceRegistry', () => {
                 requestId
             }, {
                 topic: 'invalid..topic',
-                priority: 0
+                priority: 0,
+                action: ActionType.REQUEST
             }))).toThrow('Missing or invalid topic');
 
             // Test restricted system topic
@@ -775,7 +791,8 @@ describe('ServiceRegistry', () => {
                 requestId
             }, {
                 topic: 'system.restricted',
-                priority: 0
+                priority: 0,
+                action: ActionType.REQUEST
             }))).toThrow('Unable to subscribe to restricted topic');
 
             // Test invalid priority
@@ -786,7 +803,8 @@ describe('ServiceRegistry', () => {
                 requestId
             }, {
                 topic: 'test.topic',
-                priority: NaN
+                priority: NaN,
+                action: ActionType.REQUEST
             }))).toThrow('Invalid priority');
         });
 
@@ -801,7 +819,9 @@ describe('ServiceRegistry', () => {
                 topic: 'system.topic.unsubscribe',
                 version: '1.0.0',
                 requestId
-            }, {}))).toThrow('Missing or invalid topic');
+            }, {
+                action: ActionType.REQUEST
+            }))).toThrow('Missing or invalid topic');
 
             // Test invalid topic
             expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
@@ -810,7 +830,8 @@ describe('ServiceRegistry', () => {
                 version: '1.0.0',
                 requestId
             }, {
-                topic: 'invalid..topic'
+                topic: 'invalid..topic',
+                action: ActionType.REQUEST
             }))).toThrow('Missing or invalid topic');
 
             // Test restricted system topic
@@ -820,30 +841,33 @@ describe('ServiceRegistry', () => {
                 version: '1.0.0',
                 requestId
             }, {
-                topic: 'system.restricted'
+                topic: 'system.restricted',
+                action: ActionType.REQUEST
             }))).toThrow('Unable to unsubscribe from restricted topic');
         });
 
-        it('should handle topic unsubscription success and failure', () => {
+        it('should handle topic subscription success and failure', () => {
             const serviceId = randomUUID();
             const requestId = randomUUID();
             registry.registerService(serviceId);
 
             // Mock success case
-            subscriptionManager.unsubscribe = jest.fn().mockReturnValueOnce(true);
+            subscriptionManager.subscribeRequest = jest.fn().mockReturnValueOnce(true);
             registry.handleSystemMessage(serviceId, createMockMessage({
                 action: ActionType.REQUEST,
-                topic: 'system.topic.unsubscribe',
+                topic: 'system.topic.subscribe',
                 version: '1.0.0',
                 requestId
             }, {
-                topic: 'test.topic'
+                topic: 'test.topic',
+                priority: 0,
+                action: ActionType.REQUEST
             }));
             expect(connectionManager.sendMessage).toHaveBeenLastCalledWith(
                 serviceId,
                 expect.objectContaining({
                     action: ActionType.RESPONSE,
-                    topic: 'system.topic.unsubscribe',
+                    topic: 'system.topic.subscribe',
                     requestId
                 }),
                 { status: 'success' },
@@ -851,20 +875,22 @@ describe('ServiceRegistry', () => {
             );
 
             // Mock failure case
-            subscriptionManager.unsubscribe = jest.fn().mockReturnValueOnce(false);
+            subscriptionManager.subscribeRequest = jest.fn().mockReturnValueOnce(false);
             registry.handleSystemMessage(serviceId, createMockMessage({
                 action: ActionType.REQUEST,
-                topic: 'system.topic.unsubscribe',
+                topic: 'system.topic.subscribe',
                 version: '1.0.0',
                 requestId
             }, {
-                topic: 'test.topic'
+                topic: 'test.topic',
+                priority: 0,
+                action: ActionType.REQUEST
             }));
             expect(connectionManager.sendMessage).toHaveBeenLastCalledWith(
                 serviceId,
                 expect.objectContaining({
                     action: ActionType.RESPONSE,
-                    topic: 'system.topic.unsubscribe',
+                    topic: 'system.topic.subscribe',
                     requestId
                 }),
                 { status: 'failure' },
@@ -931,8 +957,8 @@ describe('ServiceRegistry', () => {
             const requestId = randomUUID();
             registry.registerService(serviceId);
 
-            // Mock subscriptionManager.isSubscribed to return false first
-            subscriptionManager.isSubscribed = jest.fn().mockReturnValueOnce(false);
+            // Mock subscriptionManager.subscribePublish to return false first
+            subscriptionManager.subscribePublish = jest.fn().mockReturnValueOnce(false);
 
             registry.handleSystemMessage(serviceId, createMockMessage({
                 action: ActionType.REQUEST,
@@ -945,7 +971,7 @@ describe('ServiceRegistry', () => {
             }));
 
             // Verify subscription was added
-            expect(subscriptionManager.subscribe).toHaveBeenCalledWith(serviceId, 'system.log');
+            expect(subscriptionManager.subscribePublish).toHaveBeenCalledWith(serviceId, 'system.log');
 
             // Verify success response
             expect(connectionManager.sendMessage).toHaveBeenLastCalledWith(
@@ -999,63 +1025,16 @@ describe('ServiceRegistry', () => {
             );
         });
 
-        it('should handle topic subscription success and failure', () => {
-            const serviceId = randomUUID();
-            const requestId = randomUUID();
-            registry.registerService(serviceId);
-
-            // Mock success case
-            subscriptionManager.subscribe = jest.fn().mockReturnValueOnce(true);
-            registry.handleSystemMessage(serviceId, createMockMessage({
-                action: ActionType.REQUEST,
-                topic: 'system.topic.subscribe',
-                version: '1.0.0',
-                requestId
-            }, {
-                topic: 'test.topic',
-                priority: 0
-            }));
-            expect(connectionManager.sendMessage).toHaveBeenLastCalledWith(
-                serviceId,
-                expect.objectContaining({
-                    action: ActionType.RESPONSE,
-                    topic: 'system.topic.subscribe',
-                    requestId
-                }),
-                { status: 'success' },
-                undefined
-            );
-
-            // Mock failure case
-            subscriptionManager.subscribe = jest.fn().mockReturnValueOnce(false);
-            registry.handleSystemMessage(serviceId, createMockMessage({
-                action: ActionType.REQUEST,
-                topic: 'system.topic.subscribe',
-                version: '1.0.0',
-                requestId
-            }, {
-                topic: 'test.topic',
-                priority: 0
-            }));
-            expect(connectionManager.sendMessage).toHaveBeenLastCalledWith(
-                serviceId,
-                expect.objectContaining({
-                    action: ActionType.RESPONSE,
-                    topic: 'system.topic.subscribe',
-                    requestId
-                }),
-                { status: 'failure' },
-                undefined
-            );
-        });
-
         it('should handle topic list request', () => {
             const serviceId = randomUUID();
             const requestId = randomUUID();
             registry.registerService(serviceId);
 
             // Mock getAllSubscribedTopics
-            const mockTopics = ['topic1', 'topic2'];
+            const mockTopics = [
+                { topic: 'topic1', action: ActionType.PUBLISH },
+                { topic: 'topic2', action: ActionType.REQUEST, priority: 1 }
+            ];
             subscriptionManager.getAllSubscribedTopics = jest.fn().mockReturnValue(mockTopics);
 
             registry.handleSystemMessage(serviceId, createMockMessage({
@@ -1083,79 +1062,42 @@ describe('ServiceRegistry', () => {
             const requestId = randomUUID();
             registry.registerService(serviceId);
 
-            // Mock getAllSubscribedTopicWithSubscribers
-            const mockSubscribers = {
-                'topic1': [{ serviceId: 'service1', priority: 0 }],
-                'topic2': [{ serviceId: 'service2', priority: 1 }]
-            };
-            subscriptionManager.getAllSubscribedTopicWithSubscribers = jest.fn().mockReturnValue(mockSubscribers);
+            // Mock getAllSubscribedTopics
+            const mockSubscriptions = [
+                { action: ActionType.PUBLISH, topic: 'topic1', subscribers: [{ serviceId: 'service1', priority: 0 }] },
+                { action: ActionType.REQUEST, topic: 'topic2', subscribers: [{ serviceId: 'service2', priority: 1 }] }
+            ];
+            subscriptionManager.getAllSubscribedTopics = jest.fn().mockReturnValue(mockSubscriptions);
+
 
             registry.handleSystemMessage(serviceId, createMockMessage({
                 action: ActionType.REQUEST,
-                topic: 'system.topic.subscribers',
+                topic: 'system.topic.subscriptions',
                 version: '1.0.0',
                 requestId
             }));
 
-            expect(subscriptionManager.getAllSubscribedTopicWithSubscribers).toHaveBeenCalled();
+            expect(subscriptionManager.getAllSubscribedTopics).toHaveBeenCalled();
             expect(connectionManager.sendMessage).toHaveBeenCalledWith(
                 serviceId,
                 expect.objectContaining({
                     action: ActionType.RESPONSE,
-                    topic: 'system.topic.subscribers',
+                    topic: 'system.topic.subscriptions',
                     requestId
                 }),
-                { subscribers: mockSubscribers },
+                { subscriptions: mockSubscriptions },
                 undefined
             );
         });
-
-        it('should handle log subscription with and without payload parameters', () => {
-            const serviceId = randomUUID();
-            const requestId = randomUUID();
-            registry.registerService(serviceId);
-
-            // Test with empty payload (should use defaults)
-            registry.handleSystemMessage(serviceId, createMockMessage({
-                action: ActionType.REQUEST,
-                topic: 'system.log.subscribe',
-                version: '1.0.0',
-                requestId
-            }, {}));
-
-            // Verify default values were used
-            const service = registry['services'].get(serviceId);
-            expect(service?.logSubscriptions).toEqual({
-                levels: ['error'],  // Default level
-                regex: undefined    // Default regex
-            });
-
-            // Test with full payload
-            registry.handleSystemMessage(serviceId, createMockMessage({
-                action: ActionType.REQUEST,
-                topic: 'system.log.subscribe',
-                version: '1.0.0',
-                requestId
-            }, {
-                levels: ['info', 'error'],
-                regex: 'test.*'
-            }));
-
-            // Verify custom values were used
-            expect(service?.logSubscriptions).toEqual({
-                levels: ['info', 'error'],
-                regex: expect.any(RegExp)
-        });
-    });
 
         it('should handle service subscriptions with and without serviceId in payload', () => {
             const serviceId = randomUUID();
             const requestId = randomUUID();
             registry.registerService(serviceId);
 
-            // Mock subscriptionManager.getSubscribedInfo
-            const mockSubscriptions = [{ topic: 'test.topic', priority: 0 }];
-            subscriptionManager.getSubscribedInfo = jest.fn().mockReturnValue(mockSubscriptions);
+            // Mock subscriptionManager.getSubscribedTopics
+            const mockSubscriptions = [{ topic: 'test.topic', action: ActionType.REQUEST, priority: 0 }];
+            subscriptionManager.getSubscribedTopics = jest.fn().mockReturnValue(mockSubscriptions);
 
             // Test without serviceId in payload (should use requesting service's ID)
             registry.handleSystemMessage(serviceId, createMockMessage({
@@ -1165,7 +1107,7 @@ describe('ServiceRegistry', () => {
                 requestId
             }, {}));
 
-            expect(subscriptionManager.getSubscribedInfo).toHaveBeenLastCalledWith(serviceId);
+            expect(subscriptionManager.getSubscribedTopics).toHaveBeenLastCalledWith(serviceId);
 
             // Test with serviceId in payload
             const targetServiceId = randomUUID();
@@ -1173,13 +1115,186 @@ describe('ServiceRegistry', () => {
             registry.handleSystemMessage(serviceId, createMockMessage({
                 action: ActionType.REQUEST,
                 topic: 'system.service.subscriptions',
-                    version: '1.0.0',
+                version: '1.0.0',
                 requestId
             }, {
                 serviceId: targetServiceId
             }));
 
-            expect(subscriptionManager.getSubscribedInfo).toHaveBeenLastCalledWith(targetServiceId);
+            expect(subscriptionManager.getSubscribedTopics).toHaveBeenLastCalledWith(targetServiceId);
+        });
+
+        it('should validate action in topic subscription request', () => {
+            const serviceId = randomUUID();
+            const requestId = randomUUID();
+            registry.registerService(serviceId);
+
+            // Test missing action
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.topic.subscribe',
+                version: '1.0.0',
+                requestId
+            }, {
+                topic: 'test.topic',
+                priority: 0
+            }))).toThrow('Missing or invalid action');
+
+            // Test invalid action type
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.topic.subscribe',
+                version: '1.0.0',
+                requestId
+            }, {
+                topic: 'test.topic',
+                priority: 0,
+                action: 'invalid'
+            }))).toThrow('Missing or invalid action');
+        });
+
+        it('should handle both PUBLISH and REQUEST actions in topic subscription', () => {
+            const serviceId = randomUUID();
+            const requestId = randomUUID();
+            registry.registerService(serviceId);
+
+            // Test PUBLISH action
+            subscriptionManager.subscribePublish = jest.fn().mockReturnValueOnce(true);
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.topic.subscribe',
+                version: '1.0.0',
+                requestId
+            }, {
+                topic: 'test.topic',
+                action: ActionType.PUBLISH
+            }));
+            expect(subscriptionManager.subscribePublish).toHaveBeenCalledWith(serviceId, 'test.topic');
+
+            // Test REQUEST action
+            subscriptionManager.subscribeRequest = jest.fn().mockReturnValueOnce(true);
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.topic.subscribe',
+                version: '1.0.0',
+                requestId
+            }, {
+                topic: 'test.topic',
+                priority: 0,
+                action: ActionType.REQUEST
+            }));
+            expect(subscriptionManager.subscribeRequest).toHaveBeenCalledWith(serviceId, 'test.topic', 0);
+        });
+
+        it('should validate action in topic unsubscription request', () => {
+            const serviceId = randomUUID();
+            const requestId = randomUUID();
+            registry.registerService(serviceId);
+
+            // Test missing action
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.topic.unsubscribe',
+                version: '1.0.0',
+                requestId
+            }, {
+                topic: 'test.topic'
+            }))).toThrow('Missing or invalid action');
+
+            // Test invalid action type
+            expect(() => registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.topic.unsubscribe',
+                version: '1.0.0',
+                requestId
+            }, {
+                topic: 'test.topic',
+                action: 'invalid'
+            }))).toThrow('Missing or invalid action');
+        });
+
+        it('should handle both PUBLISH and REQUEST actions in topic unsubscription', () => {
+            const serviceId = randomUUID();
+            const requestId = randomUUID();
+            registry.registerService(serviceId);
+
+            // Test PUBLISH action
+            subscriptionManager.unsubscribePublish = jest.fn().mockReturnValueOnce(true);
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.topic.unsubscribe',
+                version: '1.0.0',
+                requestId
+            }, {
+                topic: 'test.topic',
+                action: ActionType.PUBLISH
+            }));
+            expect(subscriptionManager.unsubscribePublish).toHaveBeenCalledWith(serviceId, 'test.topic');
+
+            // Test REQUEST action
+            subscriptionManager.unsubscribeRequest = jest.fn().mockReturnValueOnce(true);
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.topic.unsubscribe',
+                version: '1.0.0',
+                requestId
+            }, {
+                topic: 'test.topic',
+                action: ActionType.REQUEST
+            }));
+            expect(subscriptionManager.unsubscribeRequest).toHaveBeenCalledWith(serviceId, 'test.topic');
+        });
+
+        it('should use default log level when none provided', () => {
+            const serviceId = 'test-service';
+            registry.registerService(serviceId);
+
+            // Subscribe without specifying levels
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.log.subscribe',
+                version: '1.0.0'
+            }, {
+                action: ActionType.PUBLISH
+            }));
+
+            // Verify default level was used
+            const service = registry['services'].get(serviceId);
+            expect(service?.logSubscriptions).toEqual({
+                levels: ['error'],  // Default level
+                regex: undefined    // Default regex
+            });
+        });
+
+        it('should handle topic unsubscription failure', () => {
+            const serviceId = randomUUID();
+            const requestId = randomUUID();
+            registry.registerService(serviceId);
+
+            // Mock unsubscribeRequest to return false (failure)
+            subscriptionManager.unsubscribeRequest = jest.fn().mockReturnValueOnce(false);
+
+            registry.handleSystemMessage(serviceId, createMockMessage({
+                action: ActionType.REQUEST,
+                topic: 'system.topic.unsubscribe',
+                version: '1.0.0',
+                requestId
+            }, {
+                topic: 'test.topic',
+                action: ActionType.REQUEST
+            }));
+
+            // Verify failure response
+            expect(connectionManager.sendMessage).toHaveBeenLastCalledWith(
+                serviceId,
+                expect.objectContaining({
+                    action: ActionType.RESPONSE,
+                    topic: 'system.topic.unsubscribe',
+                    requestId
+                }),
+                { status: 'failure' },
+                undefined
+            );
         });
     });
 
