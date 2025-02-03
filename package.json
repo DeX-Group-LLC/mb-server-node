@@ -50,7 +50,7 @@
     "yaml": "^2.7.0"
   },
   "dependencies": {
-    "semver": "^7.6.3",
+    "semver": "^7.7.0",
     "winston": "^3.17.0",
     "ws": "^8.18.0"
   },
