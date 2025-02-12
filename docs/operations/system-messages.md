@@ -430,7 +430,7 @@ The topic subscriptions message provides a detailed view of all topics and their
 - Returns an array of topic subscription objects
 - Each topic includes its action type (PUBLISH/REQUEST)
 - Lists all subscribers for each topic with their priorities
-- PUBLISH subscribers have default priority of 0
+- PUBLISH subscribers have no priority
 - REQUEST subscribers maintain their configured priority
 - Topics are sorted alphabetically
 - Only includes topics with active subscribers
