@@ -23,6 +23,7 @@
     "start": "ts-node -r tsconfig-paths/register src/server.ts",
     "start:client": "ts-node -r tsconfig-paths/register examples/websocket-client.ts",
     "start:client:echo": "ts-node -r tsconfig-paths/register examples/client-echo.ts",
+    "start:tcp-client": "ts-node -r tsconfig-paths/register examples/tcp-client.ts",
     "test": "jest --coverage --maxWorkers=4",
     "bench:heartbeat": "ts-node -r tsconfig-paths/register examples/bench-heartbeat.ts",
     "bench:metrics": "ts-node -r tsconfig-paths/register examples/bench-metrics.ts",
