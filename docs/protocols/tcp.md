@@ -44,7 +44,7 @@ Both secure and unsecure servers:
 
 Messages use a simple framing protocol:
 ```
-[4 bytes length][payload]
+[4 bytes length][message]
 ```
 - Length is in network byte order (big endian)
 - Maximum message size is configurable
