@@ -155,7 +155,11 @@ export class ConnectionManager {
             // Forward the message to all subscribers
             for (const subscriber of subscribers) {
                 const connection = this._resolveConnection(subscriber);
-                if (!connection) continue;
+                if (!connection) {
+                    this.subscriptionManager.unsubscribe(subscriber);
+                    this.serviceRegistry.unregisterService(subscriber);
+                    continue;
+                }
                 connection.send(msg);
             }
         }
@@ -184,7 +188,13 @@ export class ConnectionManager {
                 const msg = MessageUtils.serialize(subHeader, { timestamp: new Date().toISOString(), timeout: parser.header.timeout ?? config.request.response.timeout.default, from: connection.serviceId, message } as any as ClientMessageAudit).replace('"payload":{}', `"payload":${parser!.rawPayload.toString('utf-8')}`);
                 // Forward the message to all subscribers
                 for (const subscriber of subscribers) {
-                    this._resolveConnection(subscriber)!.send(msg);
+                    const connection = this._resolveConnection(subscriber);
+                    if (!connection) {
+                        this.subscriptionManager.unsubscribe(subscriber);
+                        this.serviceRegistry.unregisterService(subscriber);
+                        continue;
+                    }
+                    connection.send(msg);
                 }
             }
 

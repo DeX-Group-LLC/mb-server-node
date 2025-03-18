@@ -13,21 +13,41 @@ const logger = SetupLogger('WebSocketConnection');
 
 export class WebSocketConnection implements Connection {
     serviceId!: string; // This will be set by the ConnectionManager
+    private isConnected: boolean = true;
+    private messageListener?: (message: Buffer) => void;
+    private closeListener?: () => void;
 
-    constructor(private ws: WebSocket, public readonly ip: string) {}
+    constructor(
+        private ws: WebSocket,
+        public readonly ip: string
+    ) {
+        this.ws.on("message", (buffer: Buffer) => {
+            this.messageListener?.(buffer);
+        });
+
+        this.ws.on("close", () => {
+            this.close();
+        });
+
+        this.ws.on("error", (error: Error) => {
+            logger.error(`WebSocket error from service ${this.serviceId} (IP ${this.ip}):`, {
+                serviceId: this.serviceId,
+                error,
+            });
+            this.close();
+        });
+    }
 
     get state(): ConnectionState {
         return this.ws.readyState === WebSocket.OPEN ? ConnectionState.OPEN : ConnectionState.CLOSED;
     }
 
     onMessage(listener: (message: Buffer) => void): void {
-        this.ws.on('message', (buffer: Buffer) => {
-            listener(buffer);
-        });
+        this.messageListener = listener;
     }
 
     onClose(listener: () => void): void {
-        this.ws.on('close', listener);
+        this.closeListener = listener;
     }
 
     send(message: string): void {
@@ -35,7 +55,7 @@ export class WebSocketConnection implements Connection {
             this.ws.send(message);
         } else {
             logger.warn(`Unable to send message to service ${this.serviceId}: Connection is not open`);
-            throw new InternalError('Desired service connection is not open');
+            throw new InternalError("Desired service connection is not open");
         }
     }
 
@@ -43,6 +63,8 @@ export class WebSocketConnection implements Connection {
         if (this.state === ConnectionState.OPEN) {
             this.ws.close();
         }
+        this.closeListener?.();
+        this.isConnected = false;
     }
 }
 
@@ -121,11 +143,6 @@ function setupWebSocketHandlers(wss: WebSocketServer, connectionManager: Connect
 
         // Add the connection to the ConnectionManager
         connectionManager.addConnection(connection);
-
-        ws.on('error', (error: Error) => {
-            logger.error(`WebSocket error from service ${connection.serviceId} (IP ${ip}):`, { serviceId: connection.serviceId, error });
-            connectionManager.removeConnection(connection.serviceId);
-        });
     });
 
     wss.on('error', (error: Error) => {

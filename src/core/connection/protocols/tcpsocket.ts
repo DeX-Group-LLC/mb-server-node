@@ -37,14 +37,14 @@ export class TCPSocketConnection implements Connection {
         });
 
         this.socket.on('close', () => {
-            this.isConnected = false;
-            if (this.closeListener) {
-                this.closeListener();
-            }
+            this.close();
         });
 
         this.socket.on('error', (error: Error) => {
-            logger.error(`Socket error from service ${this.serviceId} (IP ${this.ip}):`, { serviceId: this.serviceId, error });
+            logger.error(`Socket error from service ${this.serviceId} (IP ${this.ip}):`, {
+                serviceId: this.serviceId,
+                error,
+            });
             this.close();
         });
     }
@@ -115,9 +115,9 @@ export class TCPSocketConnection implements Connection {
     close(): void {
         if (this.state === ConnectionState.OPEN) {
             this.socket.end();
-            this.isConnected = false;
-            this.closeListener?.();
         }
+        this.closeListener?.();
+        this.isConnected = false;
     }
 }
 
@@ -200,23 +200,18 @@ function setupTcpServerHandlers(server: net.Server, connectionManager: Connectio
 
     // Handle incoming connections
     server.on(isTls ? 'secureConnection' : 'connection', (socket: net.Socket) => {
-        const ip = socket.remoteAddress || 'unknown';
-        logger.info(`Client connected (TCP${isTls ? '/TLS' : ''}) from IP ${ip}`);
+        const ip = socket.remoteAddress || "unknown";
+        logger.info(`Client connected (TCP${isTls ? "/TLS" : ""}) from IP ${ip}`);
 
+        // Generate a unique service ID for this connection
         const connection = new TCPSocketConnection(socket, ip);
-        connectionManager.addConnection(connection);
 
-        socket.on('error', (error: Error) => {
-            logger.error(`TCP${isTls ? '/TLS' : ''} error from service ${connection.serviceId} (IP ${ip}):`, {
-                serviceId: connection.serviceId,
-                error
-            });
-            connectionManager.removeConnection(connection.serviceId);
-        });
+        // Add the connection to the ConnectionManager
+        connectionManager.addConnection(connection);
 
         // Handle connection timeout
         socket.setTimeout(config.connection.heartbeatDeregisterTimeout + 1000);
-        socket.on('timeout', () => {
+        socket.on("timeout", () => {
             socket.end();
         });
     });
