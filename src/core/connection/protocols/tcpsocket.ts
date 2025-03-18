@@ -59,7 +59,15 @@ export class TCPSocketConnection implements Connection {
             }
 
             if (this.expectedLength > config.message.payload.maxLength + MAX_HEADER_LENGTH) { // TODO: How to handle payload vs header length?
-                logger.error(`Received message with length ${this.expectedLength} which exceeds the maximum allowed size of ${config.message.payload.maxLength}`);
+                logger.error(
+                    `Received message with length ${this.expectedLength} which exceeds the maximum allowed size of ${config.message.payload.maxLength}`,
+                    {
+                        serviceId: this.serviceId,
+                        ip: this.ip,
+                        expectedLength: this.expectedLength,
+                        buffer: this.buffer.subarray(0, this.expectedLength).toString('hex'),
+                    }
+                );
                 this.close();
                 return;
             }

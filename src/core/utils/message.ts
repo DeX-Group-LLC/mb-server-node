@@ -96,7 +96,7 @@ export class Parser {
 
         // Create header object
         const header: ClientHeader = {
-            action: headerParts[0] as ActionType,
+            action: headerParts[0].toLowerCase() as ActionType,
             topic: headerParts[1],
             version: headerParts[2],
         } as ClientHeader;
