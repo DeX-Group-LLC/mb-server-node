@@ -345,10 +345,13 @@ The topic unsubscribe message allows services to remove their subscriptions to s
 | InvalidRequestError | Invalid topic format | Topic doesn't match pattern | Fix topic format |
 | InvalidRequestError | Protected topic | Attempting to unsubscribe from protected system topic | Use allowed topic |
 | InvalidRequestError | Missing topic | Topic not provided in payload | Include topic field |
+| InvalidRequestError | Invalid wildcard | Wildcard in wrong position | Fix wildcard placement |
+| InvalidRequestError | Missing action | Action type not specified | Specify publish, request, or both |
 
 **Request Payload:**
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
+| action | string | Yes | Subscription action type: "publish", "request", or "both" |
 | topic | string | Yes | Topic name |
 
 **Response Payload:**
