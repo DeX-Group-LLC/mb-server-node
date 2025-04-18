@@ -9,6 +9,7 @@ import { connect as tlsConnect } from 'tls';
 const ENABLE_REQUESTER = true;
 const ENABLE_RESPONDER = true;
 const ENABLE_LISTENER = true;
+const ENABLE_SORT_CLIENT = true;
 
 // Helper function to create message headers
 function createHeader(action: ActionType, topic: string, requestId?: string, parentRequestId?: string, timeout?: number) {
@@ -40,6 +41,7 @@ const wsProtocol = process.env.WS_PROTOCOL ?? 'ws';
 const wsPort = wsProtocol === 'wss' ? config.ports.wss : config.ports.ws;
 const requester = ENABLE_REQUESTER ? new WebSocket(`${wsProtocol}://${config.host}:${wsPort}`) : null;
 const listener = ENABLE_LISTENER ? new WebSocket(`${wsProtocol}://${config.host}:${wsPort}`) : null;
+const sortClient = ENABLE_SORT_CLIENT ? new WebSocket(`${wsProtocol}://${config.host}:${wsPort}`) : null;
 
 // Create TCP/TLS connection for responder
 const responder = ENABLE_RESPONDER ? (wsProtocol === 'wss'
@@ -217,11 +219,82 @@ if (listener) {
     });
 }
 
+// Sort Client setup (WebSocket)
+if (sortClient) {
+    sortClient.on('open', () => {
+        console.log('Sort Client connected');
+        // Register as Sort Responder Service
+        sortClient.send(createMessage(ActionType.REQUEST, 'system.service.register', {
+            name: 'Sort Responder Service',
+            description: '[WS] Responds to common.sort.request messages'
+        }, randomUUID()));
+
+        // Subscribe to common.sort.request
+        sortClient.send(createMessage(ActionType.REQUEST, 'system.topic.subscribe', {
+            action: "request",
+            topic: 'common.sort.request',
+            priority: 1
+        }, randomUUID()));
+    });
+
+    sortClient.on('message', (data: Buffer) => {
+        const message = data.toString();
+        console.log(`Sort Client Received: ${message.split('\n')[0]}`);
+
+        // Check if it's a sort request
+        if (message.startsWith(`${ActionType.REQUEST}:common.sort.request`)) {
+            try {
+                const [header, payloadStr] = message.split('\n');
+                const payload = JSON.parse(payloadStr);
+                const [action, topic, version, requestId] = header.split(':');
+
+                let itemCount = 0;
+                // Check for format 1: { iata: [...] }
+                if (Array.isArray(payload.iata)) {
+                    itemCount = payload.iata.length;
+                }
+                // Check for format 2: { barcodes: [...] }
+                else if (Array.isArray(payload.barcodes)) {
+                    itemCount = payload.barcodes.length;
+                } else {
+                    console.error('Sort Client: Received sort request with unknown payload format:', payload);
+                    return;
+                }
+
+                // Generate destinations array
+                const destinations = [];
+                for (let i = 0; i < itemCount; i++) {
+                    destinations.push((i + 1).toString());
+                }
+
+                // Create response payload
+                const responsePayload = { destinations };
+
+                // Send response
+                sortClient.send(createMessage(ActionType.RESPONSE, 'common.sort.request', responsePayload, requestId, requestId));
+                console.log(`Sort Client Sent response for ${requestId}:`, responsePayload);
+
+            } catch (error: any) {
+                console.error('Sort Client: Error processing sort request:', error);
+                // Handle parsing errors, potentially notify the sender if a requestId is available
+                const headerMatch = message.match(/^(request:[^:]+:[^:]+):([^:\n]+)/);
+                if (headerMatch && headerMatch[2]) {
+                }
+            }
+        } else if (message.startsWith(`${ActionType.RESPONSE}:system.service.register`) || message.startsWith(`${ActionType.RESPONSE}:system.topic.subscribe`)) {
+            console.log(`Sort Client Received system response: ${message.split('\n')[0]}`);
+        } else {
+            console.log(`Sort Client Received unhandled message: ${message.split('\n')[0]}`);
+        }
+    });
+}
+
 // Error handling for all connections
 const activeConnections = [
     { ws: requester, name: 'Requester' },
     { ws: responder, name: 'Responder (TCP)', isTcp: true },
-    { ws: listener, name: 'Listener' }
+    { ws: listener, name: 'Listener' },
+    { ws: sortClient, name: 'Sort Client' }
 ].filter(conn => conn.ws !== null);
 
 activeConnections.forEach(({ ws, name, isTcp }) => {
