@@ -377,8 +377,18 @@ if (sortClient) {
         const message = data.toString();
         console.log(`Sort Client Received: ${message.split("\n")[0]}`);
 
-        // Check if it's a sort request
-        if (message.startsWith(`${ActionType.REQUEST}:common.sort.request`)) {
+        // Check if it's a heartbeat request from the server
+        if (message.startsWith(`${ActionType.REQUEST}:system.heartbeat`)) {
+            try {
+                const [header] = message.split("\n");
+                const [action, topic, version, requestId] = header.split(":"); // Extract original requestId
+                // Respond to the heartbeat
+                sortClient.send(createMessage(ActionType.RESPONSE, "system.heartbeat", {}, requestId, requestId));
+                console.log(`Sort Client Sent heartbeat response for ${requestId}`);
+            } catch (error: any) {
+                console.error("Sort Client: Error processing heartbeat request:", error);
+            }
+        } else if (message.startsWith(`${ActionType.REQUEST}:common.sort.request`)) {
             try {
                 const [header, payloadStr] = message.split("\n");
                 const payload = JSON.parse(payloadStr);
