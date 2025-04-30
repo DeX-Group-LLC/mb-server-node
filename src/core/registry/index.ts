@@ -464,12 +464,6 @@ export class ServiceRegistry {
      */
     private handleServiceRegister(serviceId: string, message: MessageUtils.Parser): void {
         const { name, description } = message.parsePayload<{ name?: string, description?: string }>();
-        logger.info(`Registering service ${serviceId} with name ${name} and description ${description}`, {
-            serviceId,
-            headerRaw: message.rawHeader,
-            payloadRaw: message.rawPayload,
-            payload: message.parsePayload<{ name?: string; description?: string }>(),
-        });
 
         // Validate the payload
         if (!name || typeof name !== 'string' || !description || typeof description !== 'string') {
