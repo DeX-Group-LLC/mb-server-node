@@ -14,6 +14,7 @@
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Configuration](#configuration)
+- [Environment Variables](#environment-variables)
 - [Usage](#usage)
 - [Architecture](#architecture)
 - [Contributing](#contributing)
@@ -58,6 +59,8 @@ The broker can be configured through environment variables or a YAML file. The c
 1. Environment variables (highest priority)
 2. Custom YAML file specified by `CONFIG_PATH` environment variable
 3. Default configuration (lowest priority)
+
+### YAML Configuration
 
 Below are all available configuration options with their default values and descriptions:
 
@@ -123,7 +126,7 @@ monitoring:
   interval: 60000       # Metrics collection interval in milliseconds
 ```
 
-### Environment Variables
+## Environment Variables
 
 Environment variables can be loaded in two ways:
 1. Through a `.env` file in the project root
