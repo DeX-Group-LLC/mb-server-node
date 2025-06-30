@@ -132,9 +132,12 @@ Environment variables can be loaded in two ways:
 Here's a comprehensive list of all supported environment variables:
 
 **Server Configuration**
-- `WEBSOCKET_PORT` - WebSocket server port (default: 3000)
+- `WS_PORT` - WebSocket server port (default: 3000)
+- `WSS_PORT` - WebSocket Secure server port
 - `TCP_PORT` - TCP server port (default: 3001)
+- `TLS_PORT` - TLS server port
 - `HOST` - Host address to bind to (default: 'localhost')
+- `ALLOW_UNSECURE` - Allow unsecure connections (true/false)
 - `SSL_KEY` - Path to SSL private key file
 - `SSL_CERT` - Path to SSL certificate file
 
