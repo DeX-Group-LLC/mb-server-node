@@ -14,6 +14,7 @@
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Configuration](#configuration)
+- [Environment Variables](#environment-variables)
 - [Usage](#usage)
 - [Architecture](#architecture)
 - [Contributing](#contributing)
@@ -59,14 +60,19 @@ The broker can be configured through environment variables or a YAML file. The c
 2. Custom YAML file specified by `CONFIG_PATH` environment variable
 3. Default configuration (lowest priority)
 
+### YAML Configuration
+
 Below are all available configuration options with their default values and descriptions:
 
 ```yaml
 # Server Configuration
 ports:                       # Server ports configuration
-  websocket: 3000           # Port number for the WebSocket server
-  tcp: 3001                 # Port number for the TCP server
-host: 'localhost'             # Host address to bind the server to
+  tcp: 3001                  # Port number for the TCP server
+  tls: 8001                  # Port number for the TLS server
+  ws: 3000                   # Port number for the WebSocket server
+  wss: 8000                  # Port number for the WebSocket Secure server
+host: 'localhost'            # Host address to bind the server to
+allowUnsecure: false         # Allow unsecure connections
 ssl:                         # Optional SSL/TLS configuration
   key: ''                    # Path to SSL private key file
   cert: ''                   # Path to SSL certificate file
@@ -81,85 +87,47 @@ auth:
   failure:
     lockout:
       threshold: 5           # Number of failed authentication attempts before lockout
-      duration: 60          # Duration of lockout in seconds
+      duration: 60           # Duration of lockout in seconds
 
 # Rate Limiting Configuration
 rate:
   limit:
     global:
       per:
-        service: 0          # Global rate limit per service (0 = unlimited)
-        topic: 0           # Global rate limit per topic (0 = unlimited)
+        service: 0           # Global rate limit per service (0 = unlimited)
+        topic: 0             # Global rate limit per topic (0 = unlimited)
     topic:
       per:
-        service: {}        # Per-topic rate limits for services (key-value pairs)
+        service: {}          # Per-topic rate limits for services (key-value pairs)
 
 # Connection Management
 connection:
   max:
-    concurrent: 100        # Maximum number of concurrent WebSocket connections
-  heartbeatRetryTimeout: 30000      # Milliseconds to wait before retrying failed heartbeat
+    concurrent: 100          # Maximum number of concurrent WebSocket connections
+  heartbeatRetryTimeout: 30000       # Milliseconds to wait before retrying failed heartbeat
   heartbeatDeregisterTimeout: 60000  # Milliseconds to wait before deregistering service on heartbeat failure
 
 # Request/Response Configuration
 request:
   response:
     timeout:
-      default: 5000       # Default request timeout in milliseconds
-      max: 3600000       # Maximum allowed request timeout in milliseconds (1 hour)
+      default: 5000          # Default request timeout in milliseconds
+      max: 3600000           # Maximum allowed request timeout in milliseconds (1 hour)
 
 # Resource Limits
 max:
   outstanding:
-    requests: 10000      # Maximum number of concurrent pending requests
+    requests: 10000          # Maximum number of concurrent pending requests
 
 # Message Configuration
 message:
   payload:
-    maxLength: 16384    # Maximum message payload size in bytes (16KB)
+    maxLength: 16384         # Maximum message payload size in bytes (16KB)
 
 # Monitoring Configuration
 monitoring:
-  interval: 60000       # Metrics collection interval in milliseconds
+  interval: 60000            # Metrics collection interval in milliseconds
 ```
-
-### Environment Variables
-
-Environment variables can be loaded in two ways:
-1. Through a `.env` file in the project root
-2. Directly from the system environment
-
-Here's a comprehensive list of all supported environment variables:
-
-**Server Configuration**
-- `WEBSOCKET_PORT` - WebSocket server port (default: 3000)
-- `TCP_PORT` - TCP server port (default: 3001)
-- `HOST` - Host address to bind to (default: 'localhost')
-- `SSL_KEY` - Path to SSL private key file
-- `SSL_CERT` - Path to SSL certificate file
-
-**Authentication Configuration**
-- `AUTH_FAILURE_LOCKOUT_THRESHOLD` - Failed auth attempts before lockout (default: 5)
-- `AUTH_FAILURE_LOCKOUT_DURATION` - Lockout duration in seconds (default: 60)
-
-**Rate Limiting Configuration**
-- `RATE_LIMIT_GLOBAL_PER_SERVICE` - Global rate limit per service (default: 0)
-- `RATE_LIMIT_GLOBAL_PER_TOPIC` - Global rate limit per topic (default: 0)
-
-**Connection Management**
-- `CONNECTION_MAX_CONCURRENT` - Max concurrent WebSocket connections (default: 100)
-
-**Request/Response Configuration**
-- `REQUEST_RESPONSE_TIMEOUT_DEFAULT` - Default request timeout in ms (default: 5000)
-- `REQUEST_RESPONSE_TIMEOUT_MAX` - Maximum request timeout in ms (default: 3600000)
-
-**Resource Limits**
-- `MAX_OUTSTANDING_REQUESTS` - Max concurrent pending requests (default: 10000)
-
-**Special Configuration**
-- `CONFIG_PATH` - Path to custom YAML configuration file (default: src/config/default.yaml)
-
-Note: The environment variables shown above reflect the actual implementation. While the YAML configuration supports additional options, they can only be set through the YAML configuration file or by modifying the source code to support additional environment variables.
 
 ### Custom Configuration File
 
@@ -174,6 +142,61 @@ npm start
 ```
 
 The custom configuration will be merged with the default configuration, with custom values taking precedence.
+
+## Environment Variables
+
+Environment variables can be loaded in two ways:
+1. Through a `.env` file in the project root
+2. Directly from the system environment
+
+Here's a comprehensive list of all supported environment variables:
+
+### Server Configuration
+| Name | Description | Default |
+|------|-------------|---------|
+| `WS_PORT` | WebSocket server port | 3000 |
+| `WSS_PORT` | WebSocket Secure server port | |
+| `TCP_PORT` | TCP server port | 3001 |
+| `TLS_PORT` | TLS server port | |
+| `HOST` | Host address to bind to | 'localhost' |
+| `ALLOW_UNSECURE` | Allow unsecure connections | |
+| `SSL_KEY` | Path to SSL private key file | |
+| `SSL_CERT` | Path to SSL certificate file | |
+
+### Authentication Configuration
+| Name | Description | Default |
+|------|-------------|---------|
+| `AUTH_FAILURE_LOCKOUT_THRESHOLD` | Failed auth attempts before lockout | 5 |
+| `AUTH_FAILURE_LOCKOUT_DURATION` | Lockout duration in seconds | 60 |
+
+### Rate Limiting Configuration
+| Name | Description | Default |
+|------|-------------|---------|
+| `RATE_LIMIT_GLOBAL_PER_SERVICE` | Global rate limit per service | 0 (unlimited) |
+| `RATE_LIMIT_GLOBAL_PER_TOPIC` | Global rate limit per topic | 0 (unlimited) |
+
+### Connection Management
+| Name | Description | Default |
+|------|-------------|---------|
+| `CONNECTION_MAX_CONCURRENT` | Max concurrent WebSocket connections | 100 |
+
+### Request/Response Configuration
+| Name | Description | Default |
+|------|-------------|---------|
+| `REQUEST_RESPONSE_TIMEOUT_DEFAULT` | Default request timeout in milliseconds | 5000 |
+| `REQUEST_RESPONSE_TIMEOUT_MAX` | Maximum request timeout in milliseconds | 3600000 |
+
+### Resource Limits
+| Name | Description | Default |
+|------|-------------|---------|
+| `MAX_OUTSTANDING_REQUESTS` | Max concurrent pending requests | 10000 |
+
+### Special Configuration
+| Name | Description | Default |
+|------|-------------|---------|
+| `CONFIG_PATH` | Path to custom YAML configuration file | src/config/default.yaml |
+
+Note: The environment variables shown above reflect the actual implementation. While the YAML configuration supports additional options, they can only be set through the YAML configuration file or by modifying the source code to support additional environment variables.
 
 ## Usage
 

@@ -36,7 +36,6 @@ export function loadConfig(configPath: string = DEFAULT_CONFIG_PATH): Config {
             };
         }
         if (process.env.AUTH_FAILURE_LOCKOUT_THRESHOLD) config.auth.failure.lockout.threshold = parseInt(process.env.AUTH_FAILURE_LOCKOUT_THRESHOLD, 10);
-        if (process.env.AUTH_FAILURE_LOCKOUT_THRESHOLD) config.auth.failure.lockout.threshold = parseInt(process.env.AUTH_FAILURE_LOCKOUT_THRESHOLD, 10);
         if (process.env.AUTH_FAILURE_LOCKOUT_DURATION) config.auth.failure.lockout.duration = parseInt(process.env.AUTH_FAILURE_LOCKOUT_DURATION, 10);
         if (process.env.RATE_LIMIT_GLOBAL_PER_SERVICE) config.rate.limit.global.per.service = parseInt(process.env.RATE_LIMIT_GLOBAL_PER_SERVICE, 10);
         if (process.env.RATE_LIMIT_GLOBAL_PER_TOPIC) config.rate.limit.global.per.topic = parseInt(process.env.RATE_LIMIT_GLOBAL_PER_TOPIC, 10);
