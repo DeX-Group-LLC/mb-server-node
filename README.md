@@ -135,13 +135,13 @@ Here's a comprehensive list of all supported environment variables:
 | Name | Description | Default |
 |------|-------------|---------|
 | `WS_PORT` | WebSocket server port | 3000 |
-| `WSS_PORT` | WebSocket Secure server port | Not set |
+| `WSS_PORT` | WebSocket Secure server port | |
 | `TCP_PORT` | TCP server port | 3001 |
-| `TLS_PORT` | TLS server port | Not set |
+| `TLS_PORT` | TLS server port | |
 | `HOST` | Host address to bind to | 'localhost' |
-| `ALLOW_UNSECURE` | Allow unsecure connections | Not set |
-| `SSL_KEY` | Path to SSL private key file | Not set |
-| `SSL_CERT` | Path to SSL certificate file | Not set |
+| `ALLOW_UNSECURE` | Allow unsecure connections | |
+| `SSL_KEY` | Path to SSL private key file | |
+| `SSL_CERT` | Path to SSL certificate file | |
 
 ### Authentication Configuration
 | Name | Description | Default |
