@@ -67,9 +67,12 @@ Below are all available configuration options with their default values and desc
 ```yaml
 # Server Configuration
 ports:                       # Server ports configuration
-  websocket: 3000           # Port number for the WebSocket server
-  tcp: 3001                 # Port number for the TCP server
-host: 'localhost'             # Host address to bind the server to
+  tcp: 3001                  # Port number for the TCP server
+  tls: 8001                  # Port number for the TLS server
+  ws: 3000                   # Port number for the WebSocket server
+  wss: 8000                  # Port number for the WebSocket Secure server
+host: 'localhost'            # Host address to bind the server to
+allowUnsecure: false         # Allow unsecure connections
 ssl:                         # Optional SSL/TLS configuration
   key: ''                    # Path to SSL private key file
   cert: ''                   # Path to SSL certificate file
@@ -84,47 +87,61 @@ auth:
   failure:
     lockout:
       threshold: 5           # Number of failed authentication attempts before lockout
-      duration: 60          # Duration of lockout in seconds
+      duration: 60           # Duration of lockout in seconds
 
 # Rate Limiting Configuration
 rate:
   limit:
     global:
       per:
-        service: 0          # Global rate limit per service (0 = unlimited)
-        topic: 0           # Global rate limit per topic (0 = unlimited)
+        service: 0           # Global rate limit per service (0 = unlimited)
+        topic: 0             # Global rate limit per topic (0 = unlimited)
     topic:
       per:
-        service: {}        # Per-topic rate limits for services (key-value pairs)
+        service: {}          # Per-topic rate limits for services (key-value pairs)
 
 # Connection Management
 connection:
   max:
-    concurrent: 100        # Maximum number of concurrent WebSocket connections
-  heartbeatRetryTimeout: 30000      # Milliseconds to wait before retrying failed heartbeat
+    concurrent: 100          # Maximum number of concurrent WebSocket connections
+  heartbeatRetryTimeout: 30000       # Milliseconds to wait before retrying failed heartbeat
   heartbeatDeregisterTimeout: 60000  # Milliseconds to wait before deregistering service on heartbeat failure
 
 # Request/Response Configuration
 request:
   response:
     timeout:
-      default: 5000       # Default request timeout in milliseconds
-      max: 3600000       # Maximum allowed request timeout in milliseconds (1 hour)
+      default: 5000          # Default request timeout in milliseconds
+      max: 3600000           # Maximum allowed request timeout in milliseconds (1 hour)
 
 # Resource Limits
 max:
   outstanding:
-    requests: 10000      # Maximum number of concurrent pending requests
+    requests: 10000          # Maximum number of concurrent pending requests
 
 # Message Configuration
 message:
   payload:
-    maxLength: 16384    # Maximum message payload size in bytes (16KB)
+    maxLength: 16384         # Maximum message payload size in bytes (16KB)
 
 # Monitoring Configuration
 monitoring:
-  interval: 60000       # Metrics collection interval in milliseconds
+  interval: 60000            # Metrics collection interval in milliseconds
 ```
+
+### Custom Configuration File
+
+To use a custom configuration file:
+
+```bash
+# Set the path to your custom config file
+export CONFIG_PATH=/path/to/your/config.yaml
+
+# Start the broker
+npm start
+```
+
+The custom configuration will be merged with the default configuration, with custom values taking precedence.
 
 ## Environment Variables
 
@@ -180,20 +197,6 @@ Here's a comprehensive list of all supported environment variables:
 | `CONFIG_PATH` | Path to custom YAML configuration file | src/config/default.yaml |
 
 Note: The environment variables shown above reflect the actual implementation. While the YAML configuration supports additional options, they can only be set through the YAML configuration file or by modifying the source code to support additional environment variables.
-
-### Custom Configuration File
-
-To use a custom configuration file:
-
-```bash
-# Set the path to your custom config file
-export CONFIG_PATH=/path/to/your/config.yaml
-
-# Start the broker
-npm start
-```
-
-The custom configuration will be merged with the default configuration, with custom values taking precedence.
 
 ## Usage
 
