@@ -131,36 +131,50 @@ Environment variables can be loaded in two ways:
 
 Here's a comprehensive list of all supported environment variables:
 
-**Server Configuration**
-- `WS_PORT` - WebSocket server port (default: 3000)
-- `WSS_PORT` - WebSocket Secure server port
-- `TCP_PORT` - TCP server port (default: 3001)
-- `TLS_PORT` - TLS server port
-- `HOST` - Host address to bind to (default: 'localhost')
-- `ALLOW_UNSECURE` - Allow unsecure connections (true/false)
-- `SSL_KEY` - Path to SSL private key file
-- `SSL_CERT` - Path to SSL certificate file
+### Server Configuration
+| Name | Description | Default |
+|------|-------------|---------|
+| `WS_PORT` | WebSocket server port | 3000 |
+| `WSS_PORT` | WebSocket Secure server port | Not set |
+| `TCP_PORT` | TCP server port | 3001 |
+| `TLS_PORT` | TLS server port | Not set |
+| `HOST` | Host address to bind to | 'localhost' |
+| `ALLOW_UNSECURE` | Allow unsecure connections | Not set |
+| `SSL_KEY` | Path to SSL private key file | Not set |
+| `SSL_CERT` | Path to SSL certificate file | Not set |
 
-**Authentication Configuration**
-- `AUTH_FAILURE_LOCKOUT_THRESHOLD` - Failed auth attempts before lockout (default: 5)
-- `AUTH_FAILURE_LOCKOUT_DURATION` - Lockout duration in seconds (default: 60)
+### Authentication Configuration
+| Name | Description | Default |
+|------|-------------|---------|
+| `AUTH_FAILURE_LOCKOUT_THRESHOLD` | Failed auth attempts before lockout | 5 |
+| `AUTH_FAILURE_LOCKOUT_DURATION` | Lockout duration in seconds | 60 |
 
-**Rate Limiting Configuration**
-- `RATE_LIMIT_GLOBAL_PER_SERVICE` - Global rate limit per service (default: 0)
-- `RATE_LIMIT_GLOBAL_PER_TOPIC` - Global rate limit per topic (default: 0)
+### Rate Limiting Configuration
+| Name | Description | Default |
+|------|-------------|---------|
+| `RATE_LIMIT_GLOBAL_PER_SERVICE` | Global rate limit per service | 0 (unlimited) |
+| `RATE_LIMIT_GLOBAL_PER_TOPIC` | Global rate limit per topic | 0 (unlimited) |
 
-**Connection Management**
-- `CONNECTION_MAX_CONCURRENT` - Max concurrent WebSocket connections (default: 100)
+### Connection Management
+| Name | Description | Default |
+|------|-------------|---------|
+| `CONNECTION_MAX_CONCURRENT` | Max concurrent WebSocket connections | 100 |
 
-**Request/Response Configuration**
-- `REQUEST_RESPONSE_TIMEOUT_DEFAULT` - Default request timeout in ms (default: 5000)
-- `REQUEST_RESPONSE_TIMEOUT_MAX` - Maximum request timeout in ms (default: 3600000)
+### Request/Response Configuration
+| Name | Description | Default |
+|------|-------------|---------|
+| `REQUEST_RESPONSE_TIMEOUT_DEFAULT` | Default request timeout in milliseconds | 5000 |
+| `REQUEST_RESPONSE_TIMEOUT_MAX` | Maximum request timeout in milliseconds | 3600000 |
 
-**Resource Limits**
-- `MAX_OUTSTANDING_REQUESTS` - Max concurrent pending requests (default: 10000)
+### Resource Limits
+| Name | Description | Default |
+|------|-------------|---------|
+| `MAX_OUTSTANDING_REQUESTS` | Max concurrent pending requests | 10000 |
 
-**Special Configuration**
-- `CONFIG_PATH` - Path to custom YAML configuration file (default: src/config/default.yaml)
+### Special Configuration
+| Name | Description | Default |
+|------|-------------|---------|
+| `CONFIG_PATH` | Path to custom YAML configuration file | src/config/default.yaml |
 
 Note: The environment variables shown above reflect the actual implementation. While the YAML configuration supports additional options, they can only be set through the YAML configuration file or by modifying the source code to support additional environment variables.
 
