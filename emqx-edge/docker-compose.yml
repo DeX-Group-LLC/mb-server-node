@@ -1,0 +1,66 @@
+# EMQX Edge Docker Compose Configuration
+# This configuration provides an MQTT broker with similar goals to mb-server-node
+# See README.md for full documentation
+#
+# Ports:
+#   - 1883: MQTT over TCP
+#   - 8081: HTTP API / Web Dashboard
+#   - 8083: MQTT over WebSocket
+#   - 8883: MQTT over TLS (secure)
+#
+# Usage:
+#   docker-compose up -d
+#   docker-compose down
+#   docker-compose logs -f
+
+version: '3.8'
+
+services:
+    emqx-edge:
+        image: emqx/emqx-edge:1.2.1
+        container_name: emqx-edge
+        restart: unless-stopped
+        ports:
+            # MQTT TCP port (standard MQTT)
+            - "1883:1883"
+            # HTTP API and Web Dashboard
+            - "8081:8081"
+            # MQTT over WebSocket
+            - "8083:8083"
+            # Internal HTTP server for metrics/webhooks
+            - "8086:8086"
+            # MQTT over TLS (secure)
+            - "8883:8883"
+        volumes:
+            # Mount custom configuration file
+            - ./config/nanomq.conf:/opt/emqx-edge/nanomq.conf:ro
+            # Mount ACL configuration
+            - ./config/nanomq_acl.conf:/opt/emqx-edge/etc/nanomq_acl.conf:ro
+            # Mount password file for authentication
+            - ./config/nanomq_pwd.conf:/opt/emqx-edge/etc/nanomq_pwd.conf:ro
+            # Persistent data directory
+            - emqx_data:/opt/emqx-edge/data
+            # Logs directory
+            - emqx_logs:/opt/emqx-edge/log
+        environment:
+            # Enable debug logging if needed (comment out for production)
+            # - NANOMQ_LOG_LEVEL=debug
+            - TZ=UTC
+        healthcheck:
+            test: ["CMD", "curl", "-f", "http://localhost:8081/api/v4"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 10s
+        networks:
+            - emqx-network
+
+volumes:
+    emqx_data:
+        driver: local
+    emqx_logs:
+        driver: local
+
+networks:
+    emqx-network:
+        driver: bridge
