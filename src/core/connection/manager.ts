@@ -165,7 +165,7 @@ export class ConnectionManager {
         const subscribers = this.subscriptionManager.getPublishSubscribers("system.message");
         if (subscribers.length) {
             const subHeader = { action: ActionType.PUBLISH, topic: "system.message", version: "1.0.0" } as BrokerHeader;
-            const message = { header, payload } as any as BrokerMessageAudit["message"];
+            const message = { header, payload: Buffer.isBuffer(payload) ? JSON.parse(payload.toString("utf-8")) : payload } as any as BrokerMessageAudit["message"];
             // If the message has a parentRequestId, and it matches the maskedId, then remove the parentRequestId
             //if (maskedId && maskedId === message.header.parentRequestId) delete message.header.parentRequestId; // TODO: We should probably ensure that we don't call this function with a parentRequestId that matches the maskedId
             const msg = MessageUtils.serialize(subHeader, {

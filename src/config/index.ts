@@ -43,6 +43,7 @@ export function loadConfig(configPath: string = DEFAULT_CONFIG_PATH): Config {
         if (process.env.REQUEST_RESPONSE_TIMEOUT_DEFAULT) config.request.response.timeout.default = parseInt(process.env.REQUEST_RESPONSE_TIMEOUT_DEFAULT, 10);
         if (process.env.REQUEST_RESPONSE_TIMEOUT_MAX) config.request.response.timeout.max = parseInt(process.env.REQUEST_RESPONSE_TIMEOUT_MAX, 10);
         if (process.env.MAX_OUTSTANDING_REQUESTS) config.max.outstanding.requests = parseInt(process.env.MAX_OUTSTANDING_REQUESTS, 10);
+        if (process.env.MAX_PAYLOAD_LENGTH) config.message.payload.maxLength = parseInt(process.env.MAX_PAYLOAD_LENGTH, 10);
 
         return config;
     } catch (error) {
