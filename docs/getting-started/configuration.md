@@ -35,6 +35,11 @@ ALLOW_UNSECURE=false     # Whether to allow unsecure connections
 # SSL/TLS settings
 SSL_KEY=./certs/key.pem    # Path to SSL key file
 SSL_CERT=./certs/cert.pem  # Path to SSL certificate file
+
+# Mutual TLS (mTLS) - optional client certificate verification
+SSL_CA=./certs/ca.pem                # Path to CA certificate for verifying client certs
+SSL_REQUEST_CLIENT_CERT=false        # Whether to request a client certificate
+SSL_REJECT_UNAUTHORIZED=false        # Whether to reject connections without valid client cert
 ```
 
 ### Authentication & Authorization
@@ -84,6 +89,9 @@ allowUnsecure: false  # Whether to allow unsecure connections
 ssl:
   key: './certs/key.pem'
   cert: './certs/cert.pem'
+  # ca: './certs/ca.pem'            # CA certificate for verifying client certs (mTLS)
+  # requestClientCert: false        # Request a client certificate during TLS handshake
+  # rejectUnauthorized: false       # Reject connections without a valid client certificate
 auth:
   failure:
     lockout:
@@ -123,6 +131,9 @@ Options:
   --allow-unsecure      Allow unsecure connections (default: false)
   --ssl-key <path>      Path to SSL private key
   --ssl-cert <path>     Path to SSL certificate
+  --ssl-ca <path>       Path to CA certificate for client cert verification (mTLS)
+  --ssl-request-client-cert  Request client certificates (default: false)
+  --ssl-reject-unauthorized  Reject connections without valid client cert (default: false)
   -v, --version         Show version information
   --help               Show this help message
 ```
@@ -146,6 +157,9 @@ Options:
 |----------|------|---------|-------------|
 | `SSL_KEY` | string | - | Path to SSL private key |
 | `SSL_CERT` | string | - | Path to SSL certificate |
+| `SSL_CA` | string | - | Path to CA certificate for verifying client certs (mTLS) |
+| `SSL_REQUEST_CLIENT_CERT` | boolean | `false` | Whether to request a client certificate during TLS handshake |
+| `SSL_REJECT_UNAUTHORIZED` | boolean | `false` | Whether to reject connections without a valid client certificate |
 
 ### Authentication Settings
 
@@ -217,6 +231,7 @@ CONFIG_PATH=/path/to/config.yaml npm start
 3. **Security Settings**
    - Disable unsecure connections in production
    - Configure SSL/TLS with strong certificates
+   - Enable mutual TLS (mTLS) for client certificate verification in high-security environments
    - Set reasonable rate limits
    - Set proper timeouts
 

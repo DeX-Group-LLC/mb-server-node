@@ -84,7 +84,11 @@ export function createWebSocketServer(connectionManager: ConnectionManager): Web
         logger.debug('Creating secure WebSocket server (WSS)');
         const secureServer = https.createServer({
             key: fs.readFileSync(config.ssl.key),
-            cert: fs.readFileSync(config.ssl.cert)
+            cert: fs.readFileSync(config.ssl.cert),
+            // Optional CA for client certificate verification (mTLS)
+            ...(config.ssl.ca ? { ca: fs.readFileSync(config.ssl.ca) } : {}),
+            requestCert: config.ssl.requestClientCert ?? false,
+            rejectUnauthorized: config.ssl.rejectUnauthorized ?? false,
         });
 
         secureServer.listen(config.ports.wss, config.host, () => {

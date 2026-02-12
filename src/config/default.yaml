@@ -4,6 +4,12 @@ ports:
   ws: 3000
   wss: 8000
 host: 'localhost'
+# ssl:
+#   key: ''        # Path to server private key
+#   cert: ''       # Path to server certificate
+#   ca: ''         # Path to CA certificate for verifying client certs (mTLS)
+#   requestClientCert: false   # Request a client certificate during TLS handshake
+#   rejectUnauthorized: false  # Reject connections without a valid client certificate
 allowUnsecure: false
 logging:
   level: 'info'

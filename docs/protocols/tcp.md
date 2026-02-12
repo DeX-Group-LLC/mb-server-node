@@ -15,6 +15,9 @@ The TCP protocol implementation supports both secure (TLS) and unsecure connecti
 - `ssl`: TLS configuration
   - `key`: Path to SSL private key file
   - `cert`: Path to SSL certificate file
+  - `ca`: Path to CA certificate file for verifying client certificates (mTLS, optional)
+  - `requestClientCert`: Whether to request a client certificate during TLS handshake (default: false)
+  - `rejectUnauthorized`: Whether to reject connections without a valid client certificate (default: false)
 
 ## Server Types
 
@@ -22,6 +25,7 @@ The TCP protocol implementation supports both secure (TLS) and unsecure connecti
 - Enabled when SSL configuration is provided
 - Uses TLS v1.2 or higher
 - Requires valid SSL certificate and private key
+- Optionally verifies client certificates when `ca` and `requestClientCert` are configured (mTLS)
 - Handles TLS handshake errors gracefully
 - Logs connection attempts with IP addresses
 

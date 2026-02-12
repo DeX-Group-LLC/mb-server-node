@@ -169,6 +169,10 @@ MB_HOST=0.0.0.0
 # SSL/TLS Configuration
 MB_SSL_KEY=/app/certs/server.key
 MB_SSL_CERT=/app/certs/server.crt
+# Mutual TLS (mTLS) - optional client certificate verification
+# MB_SSL_CA=/app/certs/ca.crt
+# MB_SSL_REQUEST_CLIENT_CERT=true
+# MB_SSL_REJECT_UNAUTHORIZED=true
 
 # Logging Configuration
 MB_LOGGING_LEVEL=info
@@ -211,6 +215,34 @@ openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
 openssl req -new -newkey rsa:2048 -nodes \
   -keyout server.key -out server.csr \
   -subj "/C=US/ST=State/L=City/O=Organization/CN=example.com"
+```
+
+### 3. Mutual TLS (mTLS) Setup (Optional)
+
+To require client certificate verification, generate a CA and client certificates:
+
+```bash
+# Generate CA key and certificate
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout ca.key -out ca.crt \
+  -subj "/C=US/ST=State/L=City/O=Organization/CN=MB Server CA"
+
+# Generate client key and CSR
+openssl req -new -newkey rsa:2048 -nodes \
+  -keyout client.key -out client.csr \
+  -subj "/C=US/ST=State/L=City/O=Organization/CN=client"
+
+# Sign client certificate with CA
+openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key \
+  -CAcreateserial -out client.crt -days 365
+```
+
+Then configure the server to verify client certificates:
+
+```env
+SSL_CA=/app/certs/ca.crt
+SSL_REQUEST_CLIENT_CERT=true
+SSL_REJECT_UNAUTHORIZED=true
 ```
 
 ## Load Balancing

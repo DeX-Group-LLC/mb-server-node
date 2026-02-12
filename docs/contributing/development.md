@@ -65,6 +65,9 @@ MB_HOST=localhost
 MB_SSL_ENABLED=false
 MB_SSL_KEY=./certs/server.key
 MB_SSL_CERT=./certs/server.crt
+# MB_SSL_CA=./certs/ca.crt               # CA cert for client verification (mTLS)
+# MB_SSL_REQUEST_CLIENT_CERT=false        # Request client certificates
+# MB_SSL_REJECT_UNAUTHORIZED=false        # Reject connections without valid client cert
 
 # Logging
 MB_LOGGING_LEVEL=debug

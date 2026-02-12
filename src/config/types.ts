@@ -10,8 +10,16 @@ export interface Config {
     };
     host: string;
     ssl?: {
+        /** Path to the server private key file */
         key?: string;
+        /** Path to the server certificate file */
         cert?: string;
+        /** Path to the CA certificate file for verifying client certificates */
+        ca?: string;
+        /** Whether to request a client certificate during TLS handshake */
+        requestClientCert?: boolean;
+        /** Whether to reject connections that lack a valid client certificate */
+        rejectUnauthorized?: boolean;
     };
     allowUnsecure: boolean;
     logging: {

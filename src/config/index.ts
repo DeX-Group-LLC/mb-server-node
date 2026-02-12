@@ -31,9 +31,20 @@ export function loadConfig(configPath: string = DEFAULT_CONFIG_PATH): Config {
         if (process.env.ALLOW_UNSECURE) config.allowUnsecure = process.env.ALLOW_UNSECURE === 'true';
         if (process.env.SSL_KEY && process.env.SSL_CERT) {
             config.ssl = {
+                ...config.ssl,
                 key: process.env.SSL_KEY,
                 cert: process.env.SSL_CERT
             };
+        }
+        // Optional mTLS / client certificate overrides
+        if (process.env.SSL_CA) {
+            config.ssl = { ...config.ssl, ca: process.env.SSL_CA };
+        }
+        if (process.env.SSL_REQUEST_CLIENT_CERT) {
+            config.ssl = { ...config.ssl, requestClientCert: process.env.SSL_REQUEST_CLIENT_CERT === 'true' };
+        }
+        if (process.env.SSL_REJECT_UNAUTHORIZED) {
+            config.ssl = { ...config.ssl, rejectUnauthorized: process.env.SSL_REJECT_UNAUTHORIZED === 'true' };
         }
         if (process.env.AUTH_FAILURE_LOCKOUT_THRESHOLD) config.auth.failure.lockout.threshold = parseInt(process.env.AUTH_FAILURE_LOCKOUT_THRESHOLD, 10);
         if (process.env.AUTH_FAILURE_LOCKOUT_DURATION) config.auth.failure.lockout.duration = parseInt(process.env.AUTH_FAILURE_LOCKOUT_DURATION, 10);

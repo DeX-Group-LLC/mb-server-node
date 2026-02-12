@@ -137,6 +137,10 @@ export function createTcpServer(connectionManager: ConnectionManager): net.Serve
         const secureServer = tls.createServer({
             key: fs.readFileSync(config.ssl.key),
             cert: fs.readFileSync(config.ssl.cert),
+            // Optional CA for client certificate verification (mTLS)
+            ...(config.ssl.ca ? { ca: fs.readFileSync(config.ssl.ca) } : {}),
+            requestCert: config.ssl.requestClientCert ?? false,
+            rejectUnauthorized: config.ssl.rejectUnauthorized ?? false,
             handshakeTimeout: 5000, // 5 seconds timeout for handshake
             minVersion: 'TLSv1.2',
         });
